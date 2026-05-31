@@ -29,33 +29,16 @@ func CompleteTask(taskID string, db *storage.Storage, bot *telebot.Bot, vaultPat
 		replaceTaskStatusByContent(task.FilePath, task.Content)
 	}
 
-	// 2. Логика Parent/Child
-	isAllChildrenDone := false
-	if task.ParentID != "" {
-		siblings, err := db.GetTasksByParentID(task.ParentID)
-		if err == nil && len(siblings) > 0 {
-			allDone := true
-			for _, sib := range siblings {
-				if strings.ToLower(sib.KanbanStatus) != "done" && sib.TaskUUID != taskID {
-					allDone = false; break
-				}
-			}
-			isAllChildrenDone = allDone
-			if allDone { CompleteTask(task.ParentID, db, bot, vaultPath) }
-		}
-	}
+	// 2. БЕЗУСЛОВНО обновляем Task Manager и Kanban
+	tasksFolderPath := filepath.Join(vaultPath, "01_Задачи")
+	
+	tmPath := filepath.Join(tasksFolderPath, "Task_Manager.md")
+	replaceTaskStatusByID(tmPath, taskID)
 
-	// 3. Обновляем Task Manager и Kanban
-	if task.ParentID == "" || isAllChildrenDone {
-		tasksFolderPath := filepath.Join(vaultPath, "01_Задачи")
-		tmPath := filepath.Join(tasksFolderPath, "Task_Manager.md")
-		replaceTaskStatusByID(tmPath, taskID)
+	kanbanPath := filepath.Join(tasksFolderPath, "🎯 Канбан.md")
+	updateKanbanFile(kanbanPath, taskID)
 
-		kanbanPath := filepath.Join(tasksFolderPath, "🎯 Канбан.md")
-		updateKanbanFile(kanbanPath, taskID)
-	}
-
-	// 4. ДИНАМИЧЕСКИЙ Telegram Update
+	// 3. ДИНАМИЧЕСКИЙ Telegram Update
 	if task.MessageID != 0 && bot != nil {
 		updateTelegramMessage(task.MessageID, db, bot)
 	}
@@ -120,13 +103,15 @@ func replaceTaskStatusByID(filePath, taskID string) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil { return nil }
 
-	content := strings.Replace(string(data), "- [ ] **Задача №"+taskID, "- [x] **Задача №"+taskID, 1)
+	content := string(data)
+	if !strings.Contains(content, taskID) { return nil } // Оптимизация
+
+	content = strings.Replace(content, "- [ ] **Задача №"+taskID, "- [x] **Задача №"+taskID, 1)
 	content = strings.Replace(content, "- [ ] Задача №"+taskID, "- [x] Задача №"+taskID, 1)
 
 	return vfs.AtomicWrite(filePath, []byte(content))
 }
 
-// Пуленепробиваемый перенос задачи в Канбане
 func updateKanbanFile(kanbanPath, taskID string) error {
 	data, err := os.ReadFile(kanbanPath)
 	if err != nil { return nil }
@@ -140,7 +125,7 @@ func updateKanbanFile(kanbanPath, taskID string) error {
 	for _, line := range lines {
 		cleanLine := strings.TrimRight(line, "\r")
 		
-		// Нашли задачу - захватываем
+		// Если нашли задачу - начинаем захват
 		if strings.Contains(cleanLine, searchStr) {
 			capturing = true
 			updatedLine := strings.Replace(cleanLine, "- [ ]", "- [x]", 1)
@@ -148,8 +133,8 @@ func updateKanbanFile(kanbanPath, taskID string) error {
 			continue
 		}
 		
-		// Захватываем прикрепленные ссылки под задачей
 		if capturing {
+			// Захватываем вложенные элементы (ссылки на заметку)
 			if strings.HasPrefix(cleanLine, "\t") || strings.HasPrefix(cleanLine, "  ") {
 				taskLines = append(taskLines, cleanLine)
 				continue
@@ -165,7 +150,6 @@ func updateKanbanFile(kanbanPath, taskID string) error {
 	
 	if len(taskLines) == 0 { return nil }
 
-	// Вставляем блок под ## ✅ Готово
 	var finalLines []string
 	hasDone, inserted := false, false
 	

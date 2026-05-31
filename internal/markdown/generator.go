@@ -21,9 +21,8 @@ func GenerateNote(res ai.AnalysisResult) ([]byte, error) {
 
 	buf.WriteString(fmt.Sprintf("# %s\n\n", res.Title))
 
-	// Красивое отображение будильников (умная дата)
+	// Умная дата и отсутствие лишнего заголовка
 	if len(res.Reminders) > 0 {
-		buf.WriteString("### ⏰ Напоминания\n")
 		for _, rem := range res.Reminders {
 			smartDate := formatSmartDate(rem.Time)
 			buf.WriteString(fmt.Sprintf("> ⏰ **Напоминание установлено на:** %s\n> *%s*\n", smartDate, rem.Text))
@@ -33,7 +32,6 @@ func GenerateNote(res ai.AnalysisResult) ([]byte, error) {
 
 	buf.WriteString(res.Content + "\n\n")
 
-	// Восстановлено: Генерация физических чек-листов в самой Заметке!
 	if res.IsTask && len(res.Tasks) > 0 {
 		buf.WriteString("### 📝 Задачи\n")
 		for _, task := range res.Tasks {

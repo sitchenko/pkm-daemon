@@ -55,7 +55,12 @@ func (w *Watcher) Start() {
 		select {
 		case event, ok := <-w.watcher.Events:
 			if !ok { return }
-			if event.Op&fsnotify.Write == fsnotify.Write && strings.HasSuffix(event.Name, ".md") {
+			
+			// Obsidian часто "пересоздает" файлы вместо Write, поэтому слушаем и Create
+			isWrite := event.Op&fsnotify.Write == fsnotify.Write
+			isCreate := event.Op&fsnotify.Create == fsnotify.Create
+			
+			if (isWrite || isCreate) && strings.HasSuffix(event.Name, ".md") {
 				w.debouncer.Add(event.Name)
 			}
 		case err, ok := <-w.watcher.Errors:
@@ -76,7 +81,12 @@ func checkTaskAndSync(taskID string, w *Watcher) {
 	if err == nil && strings.ToLower(task.KanbanStatus) != "done" {
 		w.logger.Info("Detected manual task completion in Obsidian", slog.String("taskID", taskID))
 		if w.bot != nil {
-			sync.CompleteTask(taskID, w.db, w.bot, w.vaultPath)
+			err = sync.CompleteTask(taskID, w.db, w.bot, w.vaultPath)
+			if err != nil {
+				w.logger.Error("Failed to cascade sync completed task", slog.String("taskID", taskID), slog.Any("error", err))
+			}
+		} else {
+			w.logger.Warn("Bot instance not set in watcher, skipping sync")
 		}
 	}
 }
@@ -90,7 +100,13 @@ func (w *Watcher) handleFileChange(filePath string) {
 	fileName := filepath.Base(filePath)
 
 	if fileName == "🎯 Канбан.md" || fileName == "Канбан.md" {
-		// КАНБАН: Ловим перетаскивания в колонку "Готово" (даже если галочку не поставили)
+		// 1. Канбан: Ищем выполненные чекбоксы (если пользователь нажал галочку)
+		reID := regexp.MustCompile(`(?i)-\s+\[[xX]\]\s+(?:\*\*)?Задача\s+№([0-9-]+)`)
+		for _, match := range reID.FindAllStringSubmatch(content, -1) {
+			checkTaskAndSync(match[1], w)
+		}
+		
+		// 2. Канбан: Ловим ПЕРЕТАСКИВАНИЯ в колонку "Готово"
 		parts := strings.Split(content, "## ✅ Готово")
 		if len(parts) > 1 {
 			reID := regexp.MustCompile(`(?i)Задача\s+№([0-9-]+)`)
@@ -99,13 +115,13 @@ func (w *Watcher) handleFileChange(filePath string) {
 			}
 		}
 	} else if fileName == "Task_Manager.md" {
-		// TASK MANAGER: Ловим поставленные крестики - [x]
+		// Task Manager: Ищем крестики
 		reID := regexp.MustCompile(`(?i)-\s+\[[xX]\]\s+(?:\*\*)?Задача\s+№([0-9-]+)`)
 		for _, match := range reID.FindAllStringSubmatch(content, -1) {
 			checkTaskAndSync(match[1], w)
 		}
 	} else {
-		// ОБЫЧНАЯ ЗАМЕТКА: Здесь нет ID, ищем по соответствию текста с SQLite
+		// Обычная заметка: Ищем совпадения текста с базой
 		lines := strings.Split(content, "\n")
 		tasks, err := w.db.GetActiveTasks()
 		if err == nil {
@@ -114,8 +130,7 @@ func (w *Watcher) handleFileChange(filePath string) {
 				if strings.HasPrefix(clean, "- [x]") || strings.HasPrefix(clean, "- [X]") {
 					taskText := strings.TrimSpace(clean[5:])
 					for _, t := range tasks {
-						// Если путь совпадает и текст из заметки содержится в БД
-						if t.FilePath == filePath && strings.Contains(taskText, t.Content) {
+						if strings.HasSuffix(filePath, filepath.Base(t.FilePath)) && strings.Contains(taskText, strings.TrimSpace(t.Content)) {
 							checkTaskAndSync(t.TaskUUID, w)
 						}
 					}
