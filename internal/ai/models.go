@@ -11,6 +11,8 @@ type AnalysisResult struct {
 	Tags             []string `json:"tags"`                // Массив тегов
 	IsTask           bool     `json:"is_task"`             // Флаг наличия задач
 	Priority         string   `json:"priority"`            // Приоритет: High, Medium, Low
+	HasReminder      bool     `json:"has_reminder"`        // Установлено ли напоминание
+	ReminderTime     string   `json:"reminder_time"`       // Время напоминания (например, '20:00')
 	Content          string   `json:"content"`             // Описание заметки
 	Tasks            []string `json:"tasks"`               // Список шагов (если is_task = true)
 }

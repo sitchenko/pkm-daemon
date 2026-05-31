@@ -9,7 +9,7 @@ import (
 	"pkm-daemon/internal/ai"
 )
 
-// noteTemplate формирует идеальный Markdown согласно стандарту пользователя
+// noteTemplate формирует идеальный Markdown
 const noteTemplate = `---
 date: {{.Date}}
 time: {{.Time}}
@@ -25,8 +25,15 @@ tags:
 
 # {{.Title}}
 
+{{- if .HasReminder}}
+
+> ⏰ **Напоминание установлено на:** {{.ReminderTime}}
+{{- end}}
+
 {{.Content}}
-{{if .IsTask}}
+
+{{- if .IsTask}}
+
 ## Задачи
 🔗 *Задачи синхронизированы в [[Task_Manager]]*
 {{- range .Tasks}}
@@ -35,29 +42,32 @@ tags:
 {{- end}}`
 
 type templateData struct {
-	Date     string
-	Time     string
-	Title    string
-	Tags     []string
-	IsTask   bool
-	Priority string
-	Content  string
-	Tasks    []string
+	Date         string
+	Time         string
+	Title        string
+	Tags         []string
+	IsTask       bool
+	Priority     string
+	HasReminder  bool
+	ReminderTime string
+	Content      string
+	Tasks        []string
 }
 
-// GenerateNote компилирует данные из ИИ в готовый Markdown файл
 func GenerateNote(result ai.AnalysisResult) ([]byte, error) {
 	now := time.Now()
 
 	data := templateData{
-		Date:     now.Format("2006-01-02"),
-		Time:     now.Format("15:04"),
-		Title:    result.Title,
-		Tags:     result.Tags,
-		IsTask:   result.IsTask,
-		Priority: result.Priority,
-		Content:  result.Content,
-		Tasks:    result.Tasks,
+		Date:         now.Format("2006-01-02"),
+		Time:         now.Format("15:04"),
+		Title:        result.Title,
+		Tags:         result.Tags,
+		IsTask:       result.IsTask,
+		Priority:     result.Priority,
+		HasReminder:  result.HasReminder,
+		ReminderTime: result.ReminderTime,
+		Content:      result.Content,
+		Tasks:        result.Tasks,
 	}
 
 	tmpl, err := template.New("note").Parse(noteTemplate)
@@ -70,10 +80,7 @@ func GenerateNote(result ai.AnalysisResult) ([]byte, error) {
 		return nil, err
 	}
 
-	// Очищаем лишние пустые строки в самом начале
 	resultStr := strings.TrimLeft(buf.String(), "\n\r ")
-	
-	// Добавляем пустую строку в конец файла (Best Practice для Markdown)
 	if !strings.HasSuffix(resultStr, "\n") {
 		resultStr += "\n"
 	}
