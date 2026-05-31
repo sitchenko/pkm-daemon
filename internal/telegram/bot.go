@@ -23,11 +23,11 @@ type Bot struct {
 	cfg Config
 	ai  *ai.Client
 	db  *storage.Storage
-	fsm *fsm.Manager
 	log *slog.Logger
+	fsm *fsm.Manager
 }
 
-func NewBot(cfg Config, aiClient *ai.Client, db *storage.Storage, logger *slog.Logger) (*Bot, error) {
+func NewBot(cfg Config, aiClient *ai.Client, db *storage.Storage, log *slog.Logger) (*Bot, error) {
 	pref := telebot.Settings{
 		Token:  cfg.Token,
 		Poller: &telebot.LongPoller{Timeout: 10 * time.Second},
@@ -38,28 +38,32 @@ func NewBot(cfg Config, aiClient *ai.Client, db *storage.Storage, logger *slog.L
 		return nil, err
 	}
 
-	telegramBot := &Bot{
+	fsmManager := fsm.NewManager(db)
+
+	bot := &Bot{
 		bot: b,
 		cfg: cfg,
 		ai:  aiClient,
 		db:  db,
-		fsm: fsm.NewManager(db),
-		log: logger,
+		log: log,
+		fsm: fsmManager,
 	}
 
-	b.Use(telegramBot.authMiddleware())
+	bot.bot.Use(bot.authMiddleware())
+	bot.setupHandlers()
+	
+	// Интеграция 15-го этапа: регистрируем кнопку синхронизации
+	RegisterSyncHandlers(bot.bot, db, cfg.ObsidianPath, log)
 
-	b.Handle("/tasks", telegramBot.handleTasksCommand)
-	b.Handle(telebot.OnText, telegramBot.handleText)
+	return bot, nil
+}
 
-	b.Handle("\ft_done", telegramBot.handleTaskDoneCallback)
-	b.Handle("\ft_fail", telegramBot.handleTaskFailCallback)
-
-	return telegramBot, nil
+func (b *Bot) Bot() *telebot.Bot {
+	return b.bot
 }
 
 func (b *Bot) Start() {
-	b.log.Info("Telegram bot is starting...")
+	b.log.Info("Starting Telegram bot...")
 	b.bot.Start()
 }
 
@@ -68,7 +72,12 @@ func (b *Bot) Stop() {
 	b.bot.Stop()
 }
 
-// Bot возвращает нативный инстанс telebot для работы извне (например, из Планировщика)
-func (b *Bot) Bot() *telebot.Bot {
-	return b.bot
+func (b *Bot) setupHandlers() {
+	// Основной текстовый обработчик
+	b.bot.Handle(telebot.OnText, b.handleText)
+	
+	// Оставил как заготовку на будущее, пока в handlers.go нет этих методов:
+	// b.bot.Handle(telebot.OnPhoto, b.handlePhoto)
+	// b.bot.Handle(telebot.OnVoice, b.handleVoice)
+	// b.bot.Handle(telebot.OnDocument, b.handleDocument)
 }

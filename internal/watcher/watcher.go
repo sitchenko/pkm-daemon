@@ -1,23 +1,26 @@
 package watcher
 
 import (
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"gopkg.in/telebot.v3"
 
 	"pkm-daemon/internal/storage"
+	"pkm-daemon/internal/sync"
 )
 
 type Watcher struct {
 	watcher   *fsnotify.Watcher
-	debouncer *Debouncer
 	db        *storage.Storage
 	logger    *slog.Logger
+	debouncer *Debouncer
+	bot       *telebot.Bot
 	vaultPath string
 }
 
@@ -33,107 +36,93 @@ func NewWatcher(vaultPath string, db *storage.Storage, logger *slog.Logger) (*Wa
 		logger:    logger,
 		vaultPath: vaultPath,
 	}
+	
+	// Исправлено: передаем duration и callback
+	w.debouncer = NewDebouncer(500*time.Millisecond, w.handleFileChange)
 
-	// Инициализируем Debouncer с задержкой 2 секунды
-	w.debouncer = NewDebouncer(2*time.Second, w.processFile)
-
-	// Рекурсивно добавляем все существующие директории в watcher
-	if err := w.watchDirectories(vaultPath); err != nil {
-		fw.Close()
+	// Рекурсивно подписываемся на папки
+	err = filepath.Walk(vaultPath, func(path string, info os.FileInfo, err error) error {
+		if info != nil && info.IsDir() {
+			if strings.HasPrefix(info.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return fw.Add(path)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 
 	return w, nil
 }
 
-func (w *Watcher) watchDirectories(root string) error {
-	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // Игнорируем ошибки доступа
-		}
-
-		if !d.IsDir() {
-			return nil
-		}
-
-		// Игнорируем системные и скрытые директории (.obsidian, .git и т.д.)
-		if d.IsDir() && strings.HasPrefix(d.Name(), ".") && path != root {
-			return filepath.SkipDir
-		}
-
-		if err := w.watcher.Add(path); err != nil {
-			w.logger.Warn("Failed to add directory to watcher", slog.String("path", path), slog.Any("error", err))
-		} else {
-			w.logger.Debug("Watching directory", slog.String("path", path))
-		}
-
-		return nil
-	})
+// SetBot внедряет инстанс Telegram-бота для каскадной обратной синхронизации
+func (w *Watcher) SetBot(bot *telebot.Bot) {
+	w.bot = bot
 }
 
 func (w *Watcher) Start() {
-	w.logger.Info("File system watcher started", slog.String("root", w.vaultPath))
-
 	for {
 		select {
 		case event, ok := <-w.watcher.Events:
 			if !ok {
 				return
 			}
-
-			// Если была создана новая директория — динамически добавляем её в наблюдение
-			if event.Has(fsnotify.Create) {
-				info, err := os.Stat(event.Name)
-				if err == nil && info.IsDir() {
-					if !strings.HasPrefix(info.Name(), ".") {
-						_ = w.watcher.Add(event.Name)
-						w.logger.Info("Dynamically added new directory to watcher", slog.String("path", event.Name))
-					}
-				}
+			if event.Op&fsnotify.Write == fsnotify.Write && strings.HasSuffix(event.Name, ".md") {
+				// Используем исправленный метод Add
+				w.debouncer.Add(event.Name)
 			}
-
-			// Отслеживаем только изменения Markdown-файлов
-			if strings.HasSuffix(event.Name, ".md") {
-				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) {
-					w.debouncer.Trigger(event.Name)
-				}
-			}
-
 		case err, ok := <-w.watcher.Errors:
 			if !ok {
 				return
 			}
-			w.logger.Error("Watcher encountered an error", slog.Any("error", err))
+			w.logger.Error("Watcher error", slog.Any("error", err))
 		}
 	}
 }
 
-func (w *Watcher) processFile(path string) {
-	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		w.logger.Debug("File deleted or moved out, skipping index update", slog.String("path", path))
-		return
-	}
-	if err != nil {
-		w.logger.Error("Failed to stat file during debounce trigger", slog.String("path", path), slog.Any("error", err))
-		return
-	}
-
-	// Файл существует. Обновляем его информацию в БД SQLite.
-	index := &storage.VaultIndex{
-		FilePath:     path,
-		LastModified: info.ModTime(),
-		SizeBytes:    info.Size(),
-	}
-
-	if err := w.db.UpsertVaultIndex(index); err != nil {
-		w.logger.Error("Failed to update VaultIndex in DB", slog.String("path", path), slog.Any("error", err))
-	} else {
-		w.logger.Info("VaultIndex synchronized successfully", slog.String("path", path), slog.Int64("size", info.Size()))
-	}
+func (w *Watcher) Close() error {
+	w.debouncer.Stop()
+	return w.watcher.Close()
 }
 
-func (w *Watcher) Close() error {
-	w.logger.Info("Stopping file system watcher...")
-	return w.watcher.Close()
+func (w *Watcher) handleFileChange(filePath string) {
+	w.logger.Info("File change detected by Watcher", slog.String("file", filePath))
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		w.logger.Error("Failed to read changed file", slog.String("file", filePath), slog.Any("error", err))
+		return
+	}
+
+	content := string(data)
+	// Регулярка для поиска выполненных задач напрямую в Markdown
+	re := regexp.MustCompile(`(?i)-\s+\[[xX]\]\s+(?:\*\*)?Задача\s+№([0-9-]+)(?:\*\*)?:`)
+	matches := re.FindAllStringSubmatch(content, -1)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			taskID := match[1]
+			task, err := w.db.GetTaskByID(taskID)
+			if err != nil {
+				continue // Задачи нет в базе
+			}
+
+			// Разрыв бесконечного цикла: если в SQLite статус pending, а в файле [x],
+			// значит пользователь отметил галочку вручную. Инициируем каскад!
+			if strings.ToLower(task.KanbanStatus) == "pending" {
+				w.logger.Info("Detected manual task completion in Markdown", slog.String("taskID", taskID))
+				
+				if w.bot != nil {
+					err = sync.CompleteTask(taskID, w.db, w.bot, w.vaultPath)
+					if err != nil {
+						w.logger.Error("Failed to cascade sync completed task", slog.String("taskID", taskID), slog.Any("error", err))
+					}
+				} else {
+					w.logger.Warn("Bot instance not set in watcher, skipping sync")
+				}
+			}
+		}
+	}
 }

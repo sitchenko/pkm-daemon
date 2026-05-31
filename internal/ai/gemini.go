@@ -43,7 +43,7 @@ func (c *Client) AnalyzeNote(content string, filesList []string) (*AnalysisResul
 	filesStr := strings.Join(filesList, ", ")
 
 	prompt := fmt.Sprintf(`СИСТЕМНАЯ ИНСТРУКЦИЯ:
-Ты — системный архитектор базы знаний Obsidian. Ты работаешь СТРОГО по методу PARA (Тьяго Форте).
+Ты — системный архитектор базы знаний Obsidian. Ты работаешь СТРОГО по методу PARA.
 Проанализируй текст и верни СТРОГО JSON.
 
 СТРУКТУРА ХРАНИЛИЩА (PARA):
@@ -51,19 +51,19 @@ func (c *Client) AnalyzeNote(content string, filesList []string) (*AnalysisResul
 - Areas: Зоны ответственности.
 - Resources: Полезная информация.
 
-АЛГОРИТМ МАРШРУТИЗАЦИИ (КРИТИЧЕСКИ ВАЖНО):
+АЛГОРИТМ МАРШРУТИЗАЦИИ:
 1. Изучи список существующих путей: [%s].
 2. ЕСЛИ подходящая папка уже есть -> "action": "create", "target_folder": используй ПУТЬ из списка.
 3. ЕСЛИ подходящей папки НЕТ -> придумай новую категорию и запиши в "target_folder". 
-4. КЛАСТЕРИЗАЦИЯ ("reorganize"): Если заметка дополняет ОДИНОЧНЫЙ файл, ставь "action": "reorganize", укажи путь в "target_file_to_move", а в "cluster_name" — имя новой объединяющей папки.
-5. ИМЕНОВАНИЕ ПАПОК: Используй формат "ЭМОДЗИ Название" (например, '🎓 Дипломная работа', '🎯 Задачи', '📚 Ресурсы'). Эмодзи должен соответствовать смыслу папки.
+4. КЛАСТЕРИЗАЦИЯ: Если заметка дополняет файл, ставь "action": "reorganize", укажи путь в "target_file_to_move", а в "cluster_name" — имя новой папки.
+5. ИМЕНОВАНИЕ ПАПОК: Используй формат "ЭМОДЗИ Название" (например, '🎓 Дипломная работа'). Эмодзи должен соответствовать смыслу папки.
 
 ПРАВИЛА ОФОРМЛЕНИЯ ЗАМЕТКИ:
-6. "file_name": английский или транслит, без даты, snake_case (напр. 'diploma_check').
-7. "title": Человекочитаемый заголовок (напр. 'Diploma work').
-8. "tags": 1-3 тега (напр. 'образование/университет'). БЕЗ знака #.
+6. "file_name": английский или транслит, без даты, snake_case.
+7. "title": Человекочитаемый заголовок.
+8. "tags": 1-3 тега. БЕЗ знака #.
 9. "priority": High, Medium, Low.
-10. "is_task": Если есть задачи, true. "tasks": массив строк (каждая задача отдельно).
+10. "is_task": Если есть задачи, true. "tasks": массив строк.
 11. "has_reminder" и "reminder_time": Если есть время, true и время.
 
 ФОРМАТ ОТВЕТА (JSON):
@@ -125,10 +125,15 @@ func (c *Client) AnalyzeNote(content string, filesList []string) (*AnalysisResul
 		}
 
 		rawText := strings.TrimSpace(geminiResp.Candidates[0].Content.Parts[0].Text)
-		rawText = strings.TrimPrefix(rawText, "```json")
-		rawText = strings.TrimPrefix(rawText, "```")
-		rawText = strings.TrimSuffix(rawText, "```")
-		rawText = strings.TrimSpace(rawText)
+		
+		// НАДЕЖНОЕ ВЫРЕЗАНИЕ JSON (Игнорируем любой текст от ИИ до и после JSON)
+		startIdx := strings.Index(rawText, "{")
+		endIdx := strings.LastIndex(rawText, "}")
+		if startIdx != -1 && endIdx != -1 && endIdx > startIdx {
+			rawText = rawText[startIdx : endIdx+1]
+		} else {
+			return nil, fmt.Errorf("no json structure found in response: %s", rawText)
+		}
 
 		var result AnalysisResult
 		if err := json.Unmarshal([]byte(rawText), &result); err != nil {

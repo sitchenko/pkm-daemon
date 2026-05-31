@@ -18,7 +18,9 @@ type Repository interface {
 	GetActiveTasks() ([]TaskLedger, error)
 	GetTaskByID(taskUUID string) (*TaskLedger, error)
 	GetFilePathByTaskUUID(taskUUID string) (string, error)
-	GetTasksByParentID(parentID string) ([]TaskLedger, error) // НОВЫЙ МЕТОД
+	GetTasksByParentID(parentID string) ([]TaskLedger, error)
+	GetTelegramMessageByMessageID(messageID int64) (*TelegramMessage, error)
+	UpdateTaskMessageID(taskUUID string, msgID int64) error // НОВЫЙ МЕТОД
 
 	SaveSession(session *FSMSession) error
 	GetSession(userID int64) (*FSMSession, error)
@@ -34,6 +36,11 @@ type Storage struct {
 	log *slog.Logger
 }
 
+func (s *Storage) AutoMigrate() error {
+	s.log.Info("Running database migrations...")
+	return s.db.AutoMigrate(&TelegramMessage{}, &VaultIndex{}, &FSMSession{}, &Reminder{}, &TaskLedger{})
+}
+
 func (s *Storage) UpsertVaultIndex(index *VaultIndex) error {
 	return s.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "file_path"}},
@@ -47,13 +54,9 @@ func (s *Storage) SaveMessage(msg *TelegramMessage) error {
 
 func (s *Storage) FindFileByMessageID(messageID int64) (*VaultIndex, error) {
 	var msg TelegramMessage
-	if err := s.db.First(&msg, "message_id = ?", messageID).Error; err != nil {
-		return nil, err
-	}
+	if err := s.db.First(&msg, "message_id = ?", messageID).Error; err != nil { return nil, err }
 	var index VaultIndex
-	if err := s.db.First(&index, "file_path = ?", msg.FilePath).Error; err != nil {
-		return nil, err
-	}
+	if err := s.db.First(&index, "file_path = ?", msg.FilePath).Error; err != nil { return nil, err }
 	return &index, nil
 }
 
@@ -63,6 +66,10 @@ func (s *Storage) SaveTask(task *TaskLedger) error {
 
 func (s *Storage) UpdateTaskStatus(u string, st string) error {
 	return s.db.Model(&TaskLedger{}).Where("task_uuid=?", u).Update("kanban_status", st).Error
+}
+
+func (s *Storage) UpdateTaskMessageID(taskUUID string, msgID int64) error {
+	return s.db.Model(&TaskLedger{}).Where("task_uuid=?", taskUUID).Update("message_id", msgID).Error
 }
 
 func (s *Storage) GetActiveTasks() ([]TaskLedger, error) {
@@ -81,13 +88,7 @@ func (s *Storage) GetFilePathByTaskUUID(u string) (string, error) {
 	var t TaskLedger
 	err := s.db.First(&t, "task_uuid = ?", u).Error
 	if err != nil { return "", err }
-	
-	// Если путь сохранен напрямую в задаче (Этап 14)
-	if t.FilePath != "" {
-		return t.FilePath, nil
-	}
-
-	// Обратная совместимость для старых задач (поиск через сообщение)
+	if t.FilePath != "" { return t.FilePath, nil }
 	var m TelegramMessage
 	err = s.db.First(&m, "message_id = ?", t.MessageID).Error
 	if err != nil { return "", err }
@@ -96,36 +97,29 @@ func (s *Storage) GetFilePathByTaskUUID(u string) (string, error) {
 
 func (s *Storage) GetTasksByParentID(parentID string) ([]TaskLedger, error) {
 	var tasks []TaskLedger
-	if err := s.db.Where("parent_id = ?", parentID).Find(&tasks).Error; err != nil {
-		return nil, err
-	}
-	return tasks, nil
+	err := s.db.Where("parent_id = ?", parentID).Find(&tasks).Error
+	return tasks, err
 }
 
-func (s *Storage) SaveSession(ss *FSMSession) error { 
-	return s.db.Save(ss).Error 
+func (s *Storage) GetTelegramMessageByMessageID(messageID int64) (*TelegramMessage, error) {
+	var msg TelegramMessage
+	err := s.db.First(&msg, "message_id = ?", messageID).Error
+	return &msg, err
 }
 
+func (s *Storage) SaveSession(ss *FSMSession) error { return s.db.Save(ss).Error }
 func (s *Storage) GetSession(uid int64) (*FSMSession, error) { 
 	var ss FSMSession
 	err := s.db.Where("user_id=?", uid).First(&ss).Error
 	return &ss, err 
 }
-
-func (s *Storage) DeleteSession(uid int64) error { 
-	return s.db.Where("user_id=?", uid).Delete(&FSMSession{}).Error 
-}
-
-func (s *Storage) CreateReminder(reminder *Reminder) error {
-	return s.db.Create(reminder).Error
-}
-
+func (s *Storage) DeleteSession(uid int64) error { return s.db.Where("user_id=?", uid).Delete(&FSMSession{}).Error }
+func (s *Storage) CreateReminder(reminder *Reminder) error { return s.db.Create(reminder).Error }
 func (s *Storage) GetPendingReminders(currentTime time.Time) ([]Reminder, error) {
 	var reminders []Reminder
 	err := s.db.Where("trigger_time <= ? AND status = ?", currentTime, "pending").Find(&reminders).Error
 	return reminders, err
 }
-
 func (s *Storage) MarkReminderFired(reminderID uint) error {
 	return s.db.Model(&Reminder{}).Where("id = ?", reminderID).Update("status", "fired").Error
 }

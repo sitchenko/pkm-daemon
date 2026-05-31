@@ -13,7 +13,7 @@ type Debouncer struct {
 	callback func(path string)
 }
 
-// NewDebouncer создает новый экземпляр дебаунсера.
+// NewDebouncer создает новый экземпляр дебаунсера с указанной задержкой.
 func NewDebouncer(duration time.Duration, callback func(path string)) *Debouncer {
 	return &Debouncer{
 		timers:   make(map[string]*time.Timer),
@@ -22,25 +22,30 @@ func NewDebouncer(duration time.Duration, callback func(path string)) *Debouncer
 	}
 }
 
-// Trigger регистрирует событие для пути. Если таймер уже есть, он сбрасывается.
-func (d *Debouncer) Trigger(path string) {
+// Add добавляет или сбрасывает таймер для конкретного файла.
+func (d *Debouncer) Add(path string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Если таймер уже запущен для этого файла, просто обновляем его (сбрасываем отсчет)
+	// Если таймер уже есть, останавливаем его
 	if timer, exists := d.timers[path]; exists {
-		timer.Reset(d.duration)
-		return
+		timer.Stop()
 	}
 
-	// Если таймера нет, создаем новый
+	// Запускаем новый таймер
 	d.timers[path] = time.AfterFunc(d.duration, func() {
-		// Когда таймер срабатывает, удаляем его из мапы...
 		d.mu.Lock()
 		delete(d.timers, path)
 		d.mu.Unlock()
-		
-		// ...и вызываем полезную нагрузку
 		d.callback(path)
 	})
+}
+
+// Stop принудительно останавливает все активные таймеры.
+func (d *Debouncer) Stop() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, timer := range d.timers {
+		timer.Stop()
+	}
 }
