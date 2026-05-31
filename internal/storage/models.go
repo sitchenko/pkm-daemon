@@ -22,11 +22,14 @@ type VaultIndex struct {
 
 // TaskLedger хранит задачи для управления через Inline-кнопки
 type TaskLedger struct {
-	TaskUUID     string `gorm:"primaryKey"`
+	TaskUUID     string    `gorm:"primaryKey"`
+	ParentID     string    `gorm:"index"` // НОВОЕ: Ссылка на родительскую заметку
 	MessageID    int64
-	KanbanStatus string
-	Content      string
+	KanbanStatus string    `gorm:"default:'pending'"`
+	Content      string    `gorm:"type:text"`
+	FilePath     string    `gorm:"type:text"` // НОВОЕ: Физический путь к .md файлу
 	Deadline     time.Time
+	CreatedAt    time.Time `gorm:"autoCreateTime"` // НОВОЕ: Время создания
 }
 
 // FSMSession хранит состояния конечного автомата для диалогов

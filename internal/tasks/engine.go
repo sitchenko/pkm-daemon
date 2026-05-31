@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
+	"pkm-daemon/internal/storage"
 	"pkm-daemon/internal/vfs"
 )
 
@@ -58,8 +58,7 @@ func calculateSimilarity(a, b string) float64 {
 	return (1.0 - float64(dist)/float64(maxLen)) * 100.0
 }
 
-// RegisterTask принимает idSuffix (например "-1", "-2"), чтобы ID задач, созданных в одну секунду, не пересекались.
-func RegisterTask(content, noteName, vaultPath, idSuffix string, logger *slog.Logger) error {
+func RegisterTask(content, noteName, noteFullPath, vaultPath, baseID, idSuffix string, db *storage.Storage, logger *slog.Logger) error {
 	tasksDirPath := filepath.Join(vaultPath, TasksFolder)
 
 	if err := os.MkdirAll(tasksDirPath, 0755); err != nil {
@@ -93,8 +92,7 @@ func RegisterTask(content, noteName, vaultPath, idSuffix string, logger *slog.Lo
 		}
 	}
 
-	// Генерируем ID с суффиксом
-	taskID := time.Now().Format("150405") + idSuffix
+	taskID := baseID + idSuffix
 
 	tmNewLine := fmt.Sprintf("- [ ] **Задача №%s**: %s<br>📝 *[[%s]]*", taskID, content, noteName)
 
@@ -144,6 +142,22 @@ func RegisterTask(content, noteName, vaultPath, idSuffix string, logger *slog.Lo
 		return fmt.Errorf("failed to write 🎯 Канбан.md: %w", err)
 	}
 
-	logger.Info("Задача успешно зарегистрирована", slog.String("id", taskID))
+	// ==========================================
+	// 5. Запись в локальную базу SQLite
+	// ==========================================
+	ledgerEntry := storage.TaskLedger{
+		TaskUUID:     taskID,
+		ParentID:     baseID,
+		Content:      content,
+		KanbanStatus: "pending",
+		FilePath:     noteFullPath,
+	}
+
+	if err := db.SaveTask(&ledgerEntry); err != nil {
+		logger.Error("Failed to save task to SQLite index", slog.String("id", taskID), slog.Any("error", err))
+	} else {
+		logger.Info("Задача успешно зарегистрирована в БД", slog.String("id", taskID), slog.String("parent_id", baseID))
+	}
+
 	return nil
 }

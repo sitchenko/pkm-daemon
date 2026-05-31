@@ -8,34 +8,36 @@ import (
 	"time"
 
 	"pkm-daemon/internal/ai"
+	"pkm-daemon/internal/storage"
 	"pkm-daemon/internal/tasks"
 	"pkm-daemon/internal/vfs"
 )
 
-// handleTaskRegistration разбивает заметку на отдельные подзадачи и регистрирует их в Канбане
-func handleTaskRegistration(result ai.AnalysisResult, noteNameForLink, vaultPath string) {
+// handleTaskRegistration разбивает заметку на подзадачи и регистрирует их
+func handleTaskRegistration(result ai.AnalysisResult, noteNameForLink, newNoteFullPath, vaultPath string, db *storage.Storage) {
 	if !result.IsTask {
 		return
 	}
 
-	// Если есть массив независимых подзадач — регистрируем каждую отдельно
+	// Генерируем единый ParentID для всей группы задач в рамках одной заметки
+	baseID := time.Now().Format("150405")
+
 	if len(result.Tasks) > 0 {
 		for i, taskText := range result.Tasks {
-			// Добавляем суффикс -1, -2 для задач, созданных в одну секунду
 			suffix := fmt.Sprintf("-%d", i+1)
-			if err := tasks.RegisterTask(taskText, noteNameForLink, vaultPath, suffix, slog.Default()); err != nil {
+			if err := tasks.RegisterTask(taskText, noteNameForLink, newNoteFullPath, vaultPath, baseID, suffix, db, slog.Default()); err != nil {
 				slog.Default().Error("Kanban Engine Error", slog.Any("error", err))
 			}
 		}
 	} else {
-		// Резервный вариант, если ИИ вернул IsTask = true, но массив пустой
-		if err := tasks.RegisterTask(result.Content, noteNameForLink, vaultPath, "", slog.Default()); err != nil {
+		if err := tasks.RegisterTask(result.Content, noteNameForLink, newNoteFullPath, vaultPath, baseID, "", db, slog.Default()); err != nil {
 			slog.Default().Error("Kanban Engine Error", slog.Any("error", err))
 		}
 	}
 }
 
-func RouteAndSave(result ai.AnalysisResult, markdownData []byte, vaultPath string) error {
+// RouteAndSave принимает зависимость БД для проброса в Канбан-движок
+func RouteAndSave(result ai.AnalysisResult, markdownData []byte, vaultPath string, db *storage.Storage) error {
 	targetFolder := strings.TrimPrefix(result.TargetFolder, "/")
 	targetFolder = strings.TrimPrefix(targetFolder, "\\")
 
@@ -60,7 +62,7 @@ func RouteAndSave(result ai.AnalysisResult, markdownData []byte, vaultPath strin
 			return fmt.Errorf("failed to write new note: %w", err)
 		}
 
-		handleTaskRegistration(result, noteNameForLink, vaultPath)
+		handleTaskRegistration(result, noteNameForLink, newNoteFullPath, vaultPath, db)
 		return nil
 	}
 
@@ -70,6 +72,6 @@ func RouteAndSave(result ai.AnalysisResult, markdownData []byte, vaultPath strin
 		return fmt.Errorf("failed to write note: %w", err)
 	}
 
-	handleTaskRegistration(result, noteNameForLink, vaultPath)
+	handleTaskRegistration(result, noteNameForLink, fullPath, vaultPath, db)
 	return nil
 }
