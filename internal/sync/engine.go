@@ -14,35 +14,22 @@ import (
 	"pkm-daemon/internal/vfs"
 )
 
-// CompleteTask — ядро двунаправленной каскадной синхронизации
 func CompleteTask(taskID string, db *storage.Storage, bot *telebot.Bot, vaultPath string) error {
 	slog.Info("Starting Bi-directional Sync for task", slog.String("taskID", taskID))
 
-	// 1. Получаем задачу из SQLite
 	task, err := db.GetTaskByID(taskID)
-	if err != nil {
-		return fmt.Errorf("task %s not found in DB: %w", taskID, err)
-	}
+	if err != nil { return err }
 
-	// Защита от бесконечного цикла (Debouncer level 2)
-	if strings.ToLower(task.KanbanStatus) == "done" {
-		slog.Info("Task already marked as Done, skipping sync cascade", slog.String("taskID", taskID))
-		return nil
-	}
+	if strings.ToLower(task.KanbanStatus) == "done" { return nil }
 
-	// 2. Обновляем статус в SQLite
-	if err := db.UpdateTaskStatus(taskID, "Done"); err != nil {
-		return fmt.Errorf("failed to update SQLite status: %w", err)
-	}
+	db.UpdateTaskStatus(taskID, "Done")
 
-	// 3. Обновляем саму Заметку (через атомарную запись)
+	// 1. Обновляем саму Заметку (поиск по тексту)
 	if task.FilePath != "" {
-		if err := replaceTaskStatusByContent(task.FilePath, task.Content); err != nil {
-			slog.Error("Failed to update Note file", slog.String("file", task.FilePath), slog.Any("error", err))
-		}
+		replaceTaskStatusByContent(task.FilePath, task.Content)
 	}
 
-	// 4. Логика Parent/Child
+	// 2. Логика Parent/Child
 	isAllChildrenDone := false
 	if task.ParentID != "" {
 		siblings, err := db.GetTasksByParentID(task.ParentID)
@@ -50,184 +37,153 @@ func CompleteTask(taskID string, db *storage.Storage, bot *telebot.Bot, vaultPat
 			allDone := true
 			for _, sib := range siblings {
 				if strings.ToLower(sib.KanbanStatus) != "done" && sib.TaskUUID != taskID {
-					allDone = false
-					break
+					allDone = false; break
 				}
 			}
 			isAllChildrenDone = allDone
-			if allDone {
-				slog.Info("All child tasks completed, cascading to ParentID", slog.String("parentID", task.ParentID))
-				_ = CompleteTask(task.ParentID, db, bot, vaultPath)
-			}
+			if allDone { CompleteTask(task.ParentID, db, bot, vaultPath) }
 		}
 	}
 
-	// 5. Обновляем глобальные файлы (Task Manager & Kanban)
-	// Только если задача без родителя, ИЛИ если все её "братья" тоже закрыты
+	// 3. Обновляем Task Manager и Kanban
 	if task.ParentID == "" || isAllChildrenDone {
 		tasksFolderPath := filepath.Join(vaultPath, "01_Задачи")
-		
 		tmPath := filepath.Join(tasksFolderPath, "Task_Manager.md")
-		if err := replaceTaskStatusByID(tmPath, taskID); err != nil {
-			slog.Error("Failed to update Task_Manager.md", slog.Any("error", err))
-		}
+		replaceTaskStatusByID(tmPath, taskID)
 
 		kanbanPath := filepath.Join(tasksFolderPath, "🎯 Канбан.md")
-		if err := updateKanbanFile(kanbanPath, taskID); err != nil {
-			slog.Error("Failed to update Kanban.md", slog.Any("error", err))
-		}
+		updateKanbanFile(kanbanPath, taskID)
 	}
 
-	// 6. Telegram Update (Зачеркиваем исходное сообщение)
+	// 4. ДИНАМИЧЕСКИЙ Telegram Update
 	if task.MessageID != 0 && bot != nil {
-		tm, err := db.GetTelegramMessageByMessageID(task.MessageID)
-		if err == nil && tm != nil {
-			msg := &telebot.Message{
-				ID:   int(tm.MessageID),
-				Chat: &telebot.Chat{ID: tm.ChatID},
-			}
-			
-			// Используем HTML-тег <s> для зачеркивания (намного безопаснее, чем MarkdownV2)
-			strikethroughText := "<s>" + html.EscapeString(task.Content) + "</s>"
-			
-			// Edit без ReplyMarkup автоматически удаляет инлайн-кнопки
-			_, err = bot.Edit(msg, strikethroughText, &telebot.SendOptions{
-				ParseMode: telebot.ModeHTML,
-			})
-			if err != nil {
-				slog.Error("Failed to edit Telegram message", slog.Any("error", err))
-			} else {
-				slog.Info("Telegram message successfully strike-through updated")
-			}
-		}
+		updateTelegramMessage(task.MessageID, db, bot)
 	}
-
-	slog.Info("Task sync cascade complete", slog.String("taskID", taskID))
 	return nil
 }
 
-// replaceTaskStatusByContent ищет чекбокс по ТЕКСТУ задачи (для заметок, где нет ID)
-func replaceTaskStatusByContent(filePath, content string) error {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		if os.IsNotExist(err) { return nil }
-		return err
+func updateTelegramMessage(msgID int64, db *storage.Storage, bot *telebot.Bot) {
+	tm, err := db.GetTelegramMessageByMessageID(msgID)
+	if err != nil || tm == nil { return }
+	tasks, err := db.GetTasksByMessageID(msgID)
+	if err != nil { return }
+
+	var msgText strings.Builder
+	msgText.WriteString("✅ Заметка успешно создана и сохранена!\n\n")
+
+	var markup telebot.ReplyMarkup
+	var rows []telebot.Row
+
+	for _, t := range tasks {
+		if strings.ToLower(t.KanbanStatus) == "done" {
+			msgText.WriteString(fmt.Sprintf("✅ <s>%s</s>\n", html.EscapeString(t.Content)))
+		} else {
+			msgText.WriteString(fmt.Sprintf("⏳ %s\n", html.EscapeString(t.Content)))
+			btnText := "✅ " + t.Content
+			if len([]rune(btnText)) > 35 { btnText = string([]rune(btnText)[:32]) + "..." }
+			btn := markup.Data(btnText, "btn_done", t.TaskUUID)
+			rows = append(rows, markup.Row(btn))
+		}
 	}
+
+	msg := &telebot.Message{ID: int(tm.MessageID), Chat: &telebot.Chat{ID: tm.ChatID}}
+	
+	if len(rows) > 0 {
+		markup.Inline(rows...)
+		_, err = bot.Edit(msg, msgText.String(), &markup, telebot.ModeHTML)
+	} else {
+		_, err = bot.Edit(msg, msgText.String(), telebot.ModeHTML)
+	}
+
+	if err != nil { slog.Error("Failed to edit Telegram message", slog.Any("error", err)) }
+}
+
+func replaceTaskStatusByContent(filePath, contentStr string) error {
+	data, err := os.ReadFile(filePath)
+	if err != nil { return nil }
 
 	lines := strings.Split(string(data), "\n")
 	changed := false
 	for i, line := range lines {
-		if strings.Contains(line, content) && strings.Contains(line, "- [ ]") {
+		if strings.Contains(line, contentStr) && strings.Contains(line, "- [ ]") {
 			lines[i] = strings.Replace(line, "- [ ]", "- [x]", 1)
 			changed = true
 			break
 		}
 	}
 
-	if changed {
-		return vfs.AtomicWrite(filePath, []byte(strings.Join(lines, "\n")))
-	}
+	if changed { return vfs.AtomicWrite(filePath, []byte(strings.Join(lines, "\n"))) }
 	return nil
 }
 
-// replaceTaskStatusByID ищет чекбокс по ID (для Task_Manager)
 func replaceTaskStatusByID(filePath, taskID string) error {
 	data, err := os.ReadFile(filePath)
-	if err != nil {
-		if os.IsNotExist(err) { return nil }
-		return err
-	}
+	if err != nil { return nil }
 
-	lines := strings.Split(string(data), "\n")
-	changed := false
-	searchStr := "Задача №" + taskID
+	content := strings.Replace(string(data), "- [ ] **Задача №"+taskID, "- [x] **Задача №"+taskID, 1)
+	content = strings.Replace(content, "- [ ] Задача №"+taskID, "- [x] Задача №"+taskID, 1)
 
-	for i, line := range lines {
-		if strings.Contains(line, searchStr) && strings.Contains(line, "- [ ]") {
-			lines[i] = strings.Replace(line, "- [ ]", "- [x]", 1)
-			changed = true
-			break
-		}
-	}
-
-	if changed {
-		return vfs.AtomicWrite(filePath, []byte(strings.Join(lines, "\n")))
-	}
-	return nil
+	return vfs.AtomicWrite(filePath, []byte(content))
 }
 
-// updateKanbanFile вырезает задачу из '🎯 К выполнению' и вставляет в '✅ Готово'
+// Пуленепробиваемый перенос задачи в Канбане
 func updateKanbanFile(kanbanPath, taskID string) error {
 	data, err := os.ReadFile(kanbanPath)
-	if err != nil {
-		if os.IsNotExist(err) { return nil }
-		return err
-	}
-
+	if err != nil { return nil }
+	
 	lines := strings.Split(string(data), "\n")
 	var newLines []string
 	var taskLines []string
-
-	inTargetSection := false
-	capturingTask := false
+	capturing := false
+	searchStr := "Задача №" + taskID
 
 	for _, line := range lines {
 		cleanLine := strings.TrimRight(line, "\r")
-
-		if strings.HasPrefix(strings.TrimSpace(cleanLine), "## 🎯 К выполнению") {
-			inTargetSection = true
-			newLines = append(newLines, cleanLine)
+		
+		// Нашли задачу - захватываем
+		if strings.Contains(cleanLine, searchStr) {
+			capturing = true
+			updatedLine := strings.Replace(cleanLine, "- [ ]", "- [x]", 1)
+			taskLines = append(taskLines, updatedLine)
 			continue
-		} else if strings.HasPrefix(cleanLine, "## ") {
-			inTargetSection = false
 		}
-
-		if inTargetSection {
-			if strings.Contains(cleanLine, "Задача №"+taskID) {
-				capturingTask = true
-				updatedLine := strings.Replace(cleanLine, "- [ ]", "- [x]", 1)
-				taskLines = append(taskLines, updatedLine)
+		
+		// Захватываем прикрепленные ссылки под задачей
+		if capturing {
+			if strings.HasPrefix(cleanLine, "\t") || strings.HasPrefix(cleanLine, "  ") {
+				taskLines = append(taskLines, cleanLine)
 				continue
-			}
-			if capturingTask {
-				// Захватываем прикрепленную ссылку
-				if strings.HasPrefix(cleanLine, "\t*[[") || strings.HasPrefix(cleanLine, "  *[[") {
-					taskLines = append(taskLines, cleanLine)
-					continue
-				} else {
-					capturingTask = false
-				}
+			} else {
+				capturing = false
 			}
 		}
-
-		if !capturingTask {
+		
+		if !capturing {
 			newLines = append(newLines, cleanLine)
 		}
 	}
+	
+	if len(taskLines) == 0 { return nil }
 
-	if len(taskLines) > 0 {
-		var finalLines []string
-		hasDoneSection := false
-		inserted := false
-
-		for _, line := range newLines {
-			finalLines = append(finalLines, line)
-			if strings.HasPrefix(strings.TrimSpace(line), "## ✅ Готово") {
-				hasDoneSection = true
-				finalLines = append(finalLines, taskLines...)
-				inserted = true
-			}
-		}
-
-		if !hasDoneSection {
-			finalLines = append(finalLines, "", "## ✅ Готово")
+	// Вставляем блок под ## ✅ Готово
+	var finalLines []string
+	hasDone, inserted := false, false
+	
+	for _, line := range newLines {
+		finalLines = append(finalLines, line)
+		if strings.HasPrefix(strings.TrimSpace(line), "## ✅ Готово") {
+			hasDone = true
 			finalLines = append(finalLines, taskLines...)
-		} else if !inserted {
-			finalLines = append(finalLines, taskLines...)
+			inserted = true
 		}
-
-		return vfs.AtomicWrite(kanbanPath, []byte(strings.Join(finalLines, "\n")))
 	}
-
-	return nil
+	
+	if !hasDone {
+		finalLines = append(finalLines, "", "## ✅ Готово")
+		finalLines = append(finalLines, taskLines...)
+	} else if !inserted {
+		finalLines = append(finalLines, taskLines...)
+	}
+	
+	return vfs.AtomicWrite(kanbanPath, []byte(strings.Join(finalLines, "\n")))
 }

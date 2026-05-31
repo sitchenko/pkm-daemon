@@ -26,9 +26,7 @@ type Watcher struct {
 
 func NewWatcher(vaultPath string, db *storage.Storage, logger *slog.Logger) (*Watcher, error) {
 	fw, err := fsnotify.NewWatcher()
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 
 	w := &Watcher{
 		watcher:   fw,
@@ -36,47 +34,32 @@ func NewWatcher(vaultPath string, db *storage.Storage, logger *slog.Logger) (*Wa
 		logger:    logger,
 		vaultPath: vaultPath,
 	}
-	
-	// Исправлено: передаем duration и callback
 	w.debouncer = NewDebouncer(500*time.Millisecond, w.handleFileChange)
 
-	// Рекурсивно подписываемся на папки
 	err = filepath.Walk(vaultPath, func(path string, info os.FileInfo, err error) error {
 		if info != nil && info.IsDir() {
-			if strings.HasPrefix(info.Name(), ".") {
-				return filepath.SkipDir
-			}
+			if strings.HasPrefix(info.Name(), ".") { return filepath.SkipDir }
 			return fw.Add(path)
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 
 	return w, nil
 }
 
-// SetBot внедряет инстанс Telegram-бота для каскадной обратной синхронизации
-func (w *Watcher) SetBot(bot *telebot.Bot) {
-	w.bot = bot
-}
+func (w *Watcher) SetBot(bot *telebot.Bot) { w.bot = bot }
 
 func (w *Watcher) Start() {
 	for {
 		select {
 		case event, ok := <-w.watcher.Events:
-			if !ok {
-				return
-			}
+			if !ok { return }
 			if event.Op&fsnotify.Write == fsnotify.Write && strings.HasSuffix(event.Name, ".md") {
-				// Используем исправленный метод Add
 				w.debouncer.Add(event.Name)
 			}
 		case err, ok := <-w.watcher.Errors:
-			if !ok {
-				return
-			}
+			if !ok { return }
 			w.logger.Error("Watcher error", slog.Any("error", err))
 		}
 	}
@@ -87,40 +70,55 @@ func (w *Watcher) Close() error {
 	return w.watcher.Close()
 }
 
+func checkTaskAndSync(taskID string, w *Watcher) {
+	task, err := w.db.GetTaskByID(taskID)
+	// Если задача в базе всё еще Pending — значит это ручное изменение в Obsidian!
+	if err == nil && strings.ToLower(task.KanbanStatus) != "done" {
+		w.logger.Info("Detected manual task completion in Obsidian", slog.String("taskID", taskID))
+		if w.bot != nil {
+			sync.CompleteTask(taskID, w.db, w.bot, w.vaultPath)
+		}
+	}
+}
+
 func (w *Watcher) handleFileChange(filePath string) {
 	w.logger.Info("File change detected by Watcher", slog.String("file", filePath))
 
 	data, err := os.ReadFile(filePath)
-	if err != nil {
-		w.logger.Error("Failed to read changed file", slog.String("file", filePath), slog.Any("error", err))
-		return
-	}
-
+	if err != nil { return }
 	content := string(data)
-	// Регулярка для поиска выполненных задач напрямую в Markdown
-	re := regexp.MustCompile(`(?i)-\s+\[[xX]\]\s+(?:\*\*)?Задача\s+№([0-9-]+)(?:\*\*)?:`)
-	matches := re.FindAllStringSubmatch(content, -1)
+	fileName := filepath.Base(filePath)
 
-	for _, match := range matches {
-		if len(match) > 1 {
-			taskID := match[1]
-			task, err := w.db.GetTaskByID(taskID)
-			if err != nil {
-				continue // Задачи нет в базе
+	if fileName == "🎯 Канбан.md" || fileName == "Канбан.md" {
+		// КАНБАН: Ловим перетаскивания в колонку "Готово" (даже если галочку не поставили)
+		parts := strings.Split(content, "## ✅ Готово")
+		if len(parts) > 1 {
+			reID := regexp.MustCompile(`(?i)Задача\s+№([0-9-]+)`)
+			for _, match := range reID.FindAllStringSubmatch(parts[1], -1) {
+				checkTaskAndSync(match[1], w)
 			}
-
-			// Разрыв бесконечного цикла: если в SQLite статус pending, а в файле [x],
-			// значит пользователь отметил галочку вручную. Инициируем каскад!
-			if strings.ToLower(task.KanbanStatus) == "pending" {
-				w.logger.Info("Detected manual task completion in Markdown", slog.String("taskID", taskID))
-				
-				if w.bot != nil {
-					err = sync.CompleteTask(taskID, w.db, w.bot, w.vaultPath)
-					if err != nil {
-						w.logger.Error("Failed to cascade sync completed task", slog.String("taskID", taskID), slog.Any("error", err))
+		}
+	} else if fileName == "Task_Manager.md" {
+		// TASK MANAGER: Ловим поставленные крестики - [x]
+		reID := regexp.MustCompile(`(?i)-\s+\[[xX]\]\s+(?:\*\*)?Задача\s+№([0-9-]+)`)
+		for _, match := range reID.FindAllStringSubmatch(content, -1) {
+			checkTaskAndSync(match[1], w)
+		}
+	} else {
+		// ОБЫЧНАЯ ЗАМЕТКА: Здесь нет ID, ищем по соответствию текста с SQLite
+		lines := strings.Split(content, "\n")
+		tasks, err := w.db.GetActiveTasks()
+		if err == nil {
+			for _, line := range lines {
+				clean := strings.TrimSpace(line)
+				if strings.HasPrefix(clean, "- [x]") || strings.HasPrefix(clean, "- [X]") {
+					taskText := strings.TrimSpace(clean[5:])
+					for _, t := range tasks {
+						// Если путь совпадает и текст из заметки содержится в БД
+						if t.FilePath == filePath && strings.Contains(taskText, t.Content) {
+							checkTaskAndSync(t.TaskUUID, w)
+						}
 					}
-				} else {
-					w.logger.Warn("Bot instance not set in watcher, skipping sync")
 				}
 			}
 		}

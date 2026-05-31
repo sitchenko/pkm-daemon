@@ -14,7 +14,6 @@ import (
 	"pkm-daemon/internal/vfs"
 )
 
-// RouteAndSave сохраняет заметку и регистрирует задачи, возвращая сгенерированный BaseID
 func RouteAndSave(aiResult ai.AnalysisResult, content []byte, vaultPath string, db *storage.Storage) (string, error) {
 	targetDir := filepath.Join(vaultPath, aiResult.TargetFolder)
 
@@ -23,9 +22,7 @@ func RouteAndSave(aiResult ai.AnalysisResult, content []byte, vaultPath string, 
 	}
 
 	fileName := aiResult.FileName
-	if !strings.HasSuffix(fileName, ".md") {
-		fileName += ".md"
-	}
+	if !strings.HasSuffix(fileName, ".md") { fileName += ".md" }
 	fullPath := filepath.Join(targetDir, fileName)
 
 	if err := vfs.AtomicWrite(fullPath, content); err != nil {
@@ -40,6 +37,21 @@ func RouteAndSave(aiResult ai.AnalysisResult, content []byte, vaultPath string, 
 			err := tasks.RegisterTask(taskStr, fileName, fullPath, vaultPath, baseID, idSuffix, db, slog.Default())
 			if err != nil {
 				return baseID, fmt.Errorf("failed to register task %d: %w", i, err)
+			}
+		}
+	}
+
+	// Сохраняем мульти-напоминания в базу данных
+	if len(aiResult.Reminders) > 0 {
+		for _, rem := range aiResult.Reminders {
+			t, err := time.Parse(time.RFC3339, rem.Time)
+			if err == nil {
+				_ = db.CreateReminder(&storage.Reminder{
+					TaskUUID:       baseID,
+					TriggerTime:    t,
+					MessagePayload: rem.Text,
+					Status:         "pending",
+				})
 			}
 		}
 	}

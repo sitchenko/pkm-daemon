@@ -2,88 +2,79 @@ package markdown
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
-	"text/template"
 	"time"
 
 	"pkm-daemon/internal/ai"
 )
 
-// noteTemplate формирует идеальный Markdown
-const noteTemplate = `---
-date: {{.Date}}
-time: {{.Time}}
-{{- if .IsTask}}
-status: К выполнению
-priority: {{.Priority}}
-{{- end}}
-tags:
-{{- range .Tags}}
-  - {{.}}
-{{- end}}
----
+func GenerateNote(res ai.AnalysisResult) ([]byte, error) {
+	var buf bytes.Buffer
 
-# {{.Title}}
+	buf.WriteString("---\n")
+	if len(res.Tags) > 0 {
+		buf.WriteString("tags: [" + strings.Join(res.Tags, ", ") + "]\n")
+	}
+	buf.WriteString(fmt.Sprintf("date: %s\n", time.Now().Format("2006-01-02")))
+	buf.WriteString("---\n\n")
 
-{{- if .HasReminder}}
+	buf.WriteString(fmt.Sprintf("# %s\n\n", res.Title))
 
-> ⏰ **Напоминание установлено на:** {{.ReminderTime}}
-{{- end}}
+	// Красивое отображение будильников (умная дата)
+	if len(res.Reminders) > 0 {
+		buf.WriteString("### ⏰ Напоминания\n")
+		for _, rem := range res.Reminders {
+			smartDate := formatSmartDate(rem.Time)
+			buf.WriteString(fmt.Sprintf("> ⏰ **Напоминание установлено на:** %s\n> *%s*\n", smartDate, rem.Text))
+		}
+		buf.WriteString("\n")
+	}
 
-{{.Content}}
+	buf.WriteString(res.Content + "\n\n")
 
-{{- if .IsTask}}
+	// Восстановлено: Генерация физических чек-листов в самой Заметке!
+	if res.IsTask && len(res.Tasks) > 0 {
+		buf.WriteString("### 📝 Задачи\n")
+		for _, task := range res.Tasks {
+			buf.WriteString(fmt.Sprintf("- [ ] %s\n", task))
+		}
+		buf.WriteString("\n")
+	}
 
-## Задачи
-🔗 *Задачи синхронизированы в [[Task_Manager]]*
-{{- range .Tasks}}
-- [ ] {{.}}
-{{- end}}
-{{- end}}`
-
-type templateData struct {
-	Date         string
-	Time         string
-	Title        string
-	Tags         []string
-	IsTask       bool
-	Priority     string
-	HasReminder  bool
-	ReminderTime string
-	Content      string
-	Tasks        []string
+	return buf.Bytes(), nil
 }
 
-func GenerateNote(result ai.AnalysisResult) ([]byte, error) {
-	now := time.Now()
-
-	data := templateData{
-		Date:         now.Format("2006-01-02"),
-		Time:         now.Format("15:04"),
-		Title:        result.Title,
-		Tags:         result.Tags,
-		IsTask:       result.IsTask,
-		Priority:     result.Priority,
-		HasReminder:  result.HasReminder,
-		ReminderTime: result.ReminderTime,
-		Content:      result.Content,
-		Tasks:        result.Tasks,
-	}
-
-	tmpl, err := template.New("note").Parse(noteTemplate)
+// formatSmartDate превращает ISO 8601 в "завтра, 17:00", "02.06, пятница, 17:00"
+func formatSmartDate(isoStr string) string {
+	t, err := time.Parse(time.RFC3339, isoStr)
 	if err != nil {
-		return nil, err
+		return isoStr
 	}
 
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return nil, err
+	now := time.Now()
+	y1, m1, d1 := t.Date()
+	y2, m2, d2 := now.Date()
+
+	tDate := time.Date(y1, m1, d1, 0, 0, 0, 0, t.Location())
+	nowDate := time.Date(y2, m2, d2, 0, 0, 0, 0, now.Location())
+
+	daysDiff := int(tDate.Sub(nowDate).Hours() / 24)
+	timeStr := t.Format("15:04")
+
+	weekdays := map[time.Weekday]string{
+		time.Monday: "понедельник", time.Tuesday: "вторник", time.Wednesday: "среда",
+		time.Thursday: "четверг", time.Friday: "пятница", time.Saturday: "суббота", time.Sunday: "воскресенье",
 	}
 
-	resultStr := strings.TrimLeft(buf.String(), "\n\r ")
-	if !strings.HasSuffix(resultStr, "\n") {
-		resultStr += "\n"
+	switch daysDiff {
+	case 0:
+		return fmt.Sprintf("сегодня, %s", timeStr)
+	case 1:
+		return fmt.Sprintf("завтра, %s", timeStr)
+	case 2:
+		return fmt.Sprintf("послезавтра, %s", timeStr)
+	default:
+		return fmt.Sprintf("%02d.%02d, %s, %s", d1, m1, weekdays[t.Weekday()], timeStr)
 	}
-
-	return []byte(resultStr), nil
 }

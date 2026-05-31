@@ -1,20 +1,23 @@
 package ai
 
-// AnalysisResult — строго типизированный ответ от Gemini
 type AnalysisResult struct {
-	Action           string   `json:"action"`              // 'create' или 'reorganize'
-	TargetFolder     string   `json:"target_folder"`       // путь к папке (например '02_Ресурсы/Go')
-	ClusterName      string   `json:"cluster_name"`        // имя кластера (если action='reorganize')
-	TargetFileToMove string   `json:"target_file_to_move"` // путь к старому файлу (если action='reorganize')
-	FileName         string   `json:"file_name"`           // имя файла без даты
-	Title            string   `json:"title"`               // Заголовок внутри заметки (H1)
-	Tags             []string `json:"tags"`                // Массив тегов
-	IsTask           bool     `json:"is_task"`             // Флаг наличия задач
-	Priority         string   `json:"priority"`            // Приоритет: High, Medium, Low
-	HasReminder      bool     `json:"has_reminder"`        // Установлено ли напоминание
-	ReminderTime     string   `json:"reminder_time"`       // Время напоминания (например, '20:00')
-	Content          string   `json:"content"`             // Описание заметки
-	Tasks            []string `json:"tasks"`               // Список шагов (если is_task = true)
+	Action           string         `json:"action"`
+	TargetFolder     string         `json:"target_folder"`
+	ClusterName      string         `json:"cluster_name"`
+	TargetFileToMove string         `json:"target_file_to_move"`
+	FileName         string         `json:"file_name"`
+	Title            string         `json:"title"`
+	Tags             []string       `json:"tags"`
+	IsTask           bool           `json:"is_task"`
+	Priority         string         `json:"priority"`
+	Content          string         `json:"content"`
+	Tasks            []string       `json:"tasks"`
+	Reminders        []ReminderInfo `json:"reminders"` // Изменено на массив
+}
+
+type ReminderInfo struct {
+	Time string `json:"time"`
+	Text string `json:"text"`
 }
 
 type geminiRequest struct {
