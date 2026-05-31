@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const geminiAPIURL = "https://" + "generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="
+const geminiAPIURL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="
 
 type Client struct {
 	keys       []string
@@ -34,66 +34,61 @@ func NewClient(keys []string, logger *slog.Logger) *Client {
 func (c *Client) getNextKey() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-
 	key := c.keys[c.keyIndex]
 	c.keyIndex = (c.keyIndex + 1) % len(c.keys)
 	return key
 }
 
-func (c *Client) AnalyzeNote(content string, existingFolders []string, existingTags []string) (*AnalysisResult, error) {
-	now := time.Now().Format(time.RFC3339) // Динамический контекст времени для ИИ
-	
-	prompt := fmt.Sprintf(`СИСТЕМНАЯ ИНСТРУКЦИЯ:
-Ты — интеллектуальный арбитр системы управления знаниями (PKM).
-Проанализируй заметку пользователя и верни результат СТРОГО И ИСКЛЮЧИТЕЛЬНО в формате JSON.
-Не пиши приветствий, пояснений и прочего текста. Только валидный JSON-объект.
+func (c *Client) AnalyzeNote(content string, filesList []string) (*AnalysisResult, error) {
+	filesStr := strings.Join(filesList, ", ")
 
-ФОРМАТ ОТВЕТА:
+	prompt := fmt.Sprintf(`СИСТЕМНАЯ ИНСТРУКЦИЯ:
+Ты — системный архитектор базы знаний Obsidian. Проанализируй текст и верни СТРОГО JSON.
+
+ПРАВИЛА КЛАСТЕРИЗАЦИИ:
+1. Изучи список существующих файлов: [%s].
+2. Если мысль пересекается с ОДНИМ файлом -> "action": "reorganize", "cluster_name": "объединяющее_имя".
+3. Если подходит в СУЩЕСТВУЮЩИЙ кластер -> "action": "create", "target_folder": "имя_главной/имя_кластера".
+4. Если пересечений нет -> "action": "create", "target_folder": "имя_категории".
+
+ПРАВИЛА ОФОРМЛЕНИЯ ЗАМЕТКИ:
+5. "file_name": английский или транслит, без даты, со змеиным_регистром (напр. 'diploma_work').
+6. "title": Человекочитаемый заголовок (напр. 'Diploma work').
+7. "tags": 1-3 тега в формате 'область/категория' (напр. 'образование/университет'). БЕЗ знака #.
+8. "priority": Оцени срочность (High, Medium, Low). По умолчанию Medium.
+9. "content": Основной описательный текст.
+10. "is_task" и "tasks": Если в тексте есть план или просьба что-то сделать, ставь "is_task": true и выпиши конкретные шаги в массив строк "tasks" (БЕЗ маркдаун чек-боксов, просто текст). Иначе "is_task": false и [].
+
+ФОРМАТ ОТВЕТА (JSON):
 {
-  "title": "краткий и емкий заголовок (до 5-6 слов)",
-  "folder": "выбери одну подходящую папку из списка: [%s]. Если ничего не подходит, верни 'Inbox'",
-  "tags": ["массив", "тегов", "включая подходящие из: %s"],
-  "is_task": true/false (true, если в тексте есть дедлайн, напоминание или призыв к действию),
-  "reminder_time": "строка в ISO8601 или пусто"
+  "action": "create",
+  "target_folder": "01_Projects",
+  "cluster_name": "",
+  "file_name": "diploma_work",
+  "title": "Diploma work",
+  "tags": ["образование/университет"],
+  "is_task": true,
+  "priority": "High",
+  "content": "Дипломная работа: необходимо убедиться в академичности...",
+  "tasks": ["Проверить подписи", "Добавить источники"]
 }
 
-Текущее системное время: %s. Если пользователь просит напомнить о чем-то (например, 'напомни завтра вечером'), вычисли и верни точную дату и время в поле 'reminder_time' в формате ISO8601 (например, 2026-05-31T18:00:00Z). Если напоминания нет, верни пустую строку "".
-
-ЗАМЕТКА ПОЛЬЗОВАТЕЛЯ:
-%s`, 
-		strings.Join(existingFolders, ", "), 
-		strings.Join(existingTags, ", "), 
-		now,
-		content,
-	)
+ТЕКСТ ПОЛЬЗОВАТЕЛЯ:
+%s`, filesStr, content)
 
 	reqBody := geminiRequest{
-		Contents: []geminiContent{
-			{Parts: []geminiPart{{Text: prompt}}},
-		},
+		Contents: []geminiContent{{Parts: []geminiPart{{Text: prompt}}}},
 	}
-
-	payload, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
+	payload, _ := json.Marshal(reqBody)
 
 	maxRetries := len(c.keys)
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		key := c.getNextKey()
-		maskedKey := key[:8] + "..." + key[len(key)-4:]
-		
-		c.logger.Debug("Sending request to Gemini", slog.String("key", maskedKey), slog.Int("attempt", attempt+1))
-
-		req, err := http.NewRequest(http.MethodPost, geminiAPIURL+key, bytes.NewBuffer(payload))
-		if err != nil {
-			return nil, fmt.Errorf("failed to create http request: %w", err)
-		}
+		req, _ := http.NewRequest(http.MethodPost, geminiAPIURL+key, bytes.NewBuffer(payload))
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			c.logger.Error("Network error during Gemini request", slog.Any("error", err))
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -102,43 +97,36 @@ func (c *Client) AnalyzeNote(content string, existingFolders []string, existingT
 		resp.Body.Close()
 
 		if resp.StatusCode == http.StatusTooManyRequests {
-			c.logger.Warn("Rate limit hit (429), rotating key and retrying...", slog.String("failed_key", maskedKey))
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
 		if resp.StatusCode != http.StatusOK {
-			return nil, fmt.Errorf("gemini api error (status %d): %s", resp.StatusCode, string(bodyBytes))
+			return nil, fmt.Errorf("gemini error: %d %s", resp.StatusCode, string(bodyBytes))
 		}
 
 		var geminiResp geminiResponse
 		if err := json.Unmarshal(bodyBytes, &geminiResp); err != nil {
-			return nil, fmt.Errorf("failed to decode gemini response: %w", err)
+			return nil, err
 		}
 
 		if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-			return nil, fmt.Errorf("empty response from gemini")
+			return nil, fmt.Errorf("empty response")
 		}
 
-		rawText := geminiResp.Candidates[0].Content.Parts[0].Text
-
-		rawText = strings.TrimSpace(rawText)
-		if strings.HasPrefix(rawText, "```json") {
-			rawText = strings.TrimPrefix(rawText, "```json")
-			rawText = strings.TrimSuffix(rawText, "```")
-		} else if strings.HasPrefix(rawText, "```") {
-			rawText = strings.TrimPrefix(rawText, "```")
-			rawText = strings.TrimSuffix(rawText, "```")
-		}
+		rawText := strings.TrimSpace(geminiResp.Candidates[0].Content.Parts[0].Text)
+		rawText = strings.TrimPrefix(rawText, "```json")
+		rawText = strings.TrimPrefix(rawText, "```")
+		rawText = strings.TrimSuffix(rawText, "```")
 		rawText = strings.TrimSpace(rawText)
 
 		var result AnalysisResult
 		if err := json.Unmarshal([]byte(rawText), &result); err != nil {
-			return nil, fmt.Errorf("failed to parse JSON from llm: %w. Raw text: %s", err, rawText)
+			return nil, fmt.Errorf("failed to parse JSON: %w", err)
 		}
 
 		return &result, nil
 	}
 
-	return nil, fmt.Errorf("all %d api keys exhausted or rate limited", maxRetries)
+	return nil, fmt.Errorf("ai failed after %d retries", maxRetries)
 }

@@ -1,12 +1,17 @@
 package ai
 
-// AnalysisResult — это строго типизированный ответ, который мы ожидаем от LLM.
+// AnalysisResult — строго типизированный ответ от Gemini
 type AnalysisResult struct {
-	Title        string   `json:"title"`
-	Folder       string   `json:"folder"`
-	Tags         []string `json:"tags"`
-	IsTask       bool     `json:"is_task"`
-	ReminderTime string   `json:"reminder_time"` // Новое поле для даты/времени напоминания
+	Action       string   `json:"action"`
+	TargetFolder string   `json:"target_folder"`
+	ClusterName  string   `json:"cluster_name"`
+	FileName     string   `json:"file_name"`
+	Title        string   `json:"title"`    // Заголовок внутри заметки (H1)
+	Tags         []string `json:"tags"`     // Массив тегов
+	IsTask       bool     `json:"is_task"`  // Флаг наличия задач
+	Priority     string   `json:"priority"` // Приоритет: High, Medium, Low
+	Content      string   `json:"content"`  // Описание заметки
+	Tasks        []string `json:"tasks"`    // Список шагов (если is_task = true)
 }
 
 type geminiRequest struct {
@@ -21,7 +26,6 @@ type geminiPart struct {
 	Text string `json:"text"`
 }
 
-// Структуры для парсинга REST-ответа от Gemini
 type geminiResponse struct {
 	Candidates []struct {
 		Content struct {
