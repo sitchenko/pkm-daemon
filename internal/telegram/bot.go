@@ -51,8 +51,8 @@ func NewBot(cfg Config, aiClient *ai.Client, db *storage.Storage, log *slog.Logg
 
 	bot.bot.Use(bot.authMiddleware())
 	bot.setupHandlers()
-	
-	// Интеграция 15-го этапа: регистрируем кнопку синхронизации
+
+	// Синхронизация Этапа 15 (если уже подключено, не теряем)
 	RegisterSyncHandlers(bot.bot, db, cfg.ObsidianPath, log)
 
 	return bot, nil
@@ -73,11 +73,12 @@ func (b *Bot) Stop() {
 }
 
 func (b *Bot) setupHandlers() {
-	// Основной текстовый обработчик
+	// Базовый текстовый обработчик
 	b.bot.Handle(telebot.OnText, b.handleText)
-	
-	// Оставил как заготовку на будущее, пока в handlers.go нет этих методов:
-	// b.bot.Handle(telebot.OnPhoto, b.handlePhoto)
-	// b.bot.Handle(telebot.OnVoice, b.handleVoice)
-	// b.bot.Handle(telebot.OnDocument, b.handleDocument)
+
+	// Обработчики медиафайлов (Этап 16)
+	b.bot.Handle(telebot.OnPhoto, b.handleMedia)
+	b.bot.Handle(telebot.OnVoice, b.handleMedia)
+	b.bot.Handle(telebot.OnVideo, b.handleMedia)
+	b.bot.Handle(telebot.OnDocument, b.handleMedia)
 }

@@ -2,7 +2,6 @@ package vfs
 
 import (
 	"fmt"
-	"io/fs"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -11,144 +10,113 @@ import (
 )
 
 const (
-	maxRetries    = 5
-	baseDelayMs   = 50
-	maxDelayMs    = 1000
+	maxRetries  = 5
+	baseDelayMs = 50
+	maxDelayMs  = 1000
 )
 
-// ScanVault рекурсивно обходит директорию Obsidian, игнорируя системные папки (начинающиеся с точки).
-// Возвращает список относительных путей ко всем файлам и папкам.
+// ScanVault рекурсивно сканирует хранилище, собирая структуру Markdown файлов.
 func ScanVault(rootPath string) ([]string, error) {
-	var paths []string
+	var files []string
 
-	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			// Если нет прав на папку, просто пропускаем ее
-			return nil
-		}
-
-		// Игнорируем сам корень
-		if path == rootPath {
-			return nil
-		}
-
-		// Вычисляем относительный путь
-		relPath, err := filepath.Rel(rootPath, path)
+	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
+		// ИГНОРИРУЕМ ОШИБКИ: Если файл (например, desktop.ini) заблокирован или исчез
+		// во время сканирования, мы просто пропускаем его и идем дальше.
 		if err != nil {
 			return nil
 		}
 
-		// Защита: пропускаем любые директории, начинающиеся с точки (.obsidian, .trash, .git)
-		if d.IsDir() && strings.HasPrefix(d.Name(), ".") {
-			return filepath.SkipDir // Полностью пропускаем обход этой ветки
+		// Пропускаем скрытые папки (например, .obsidian, .git)
+		if info.IsDir() && strings.HasPrefix(info.Name(), ".") {
+			return filepath.SkipDir
 		}
 
-		// Если это файл, и он начинается с точки - просто игнорируем
-		if !d.IsDir() && strings.HasPrefix(d.Name(), ".") {
-			return nil
+		// Сохраняем только Markdown файлы
+		if !info.IsDir() && strings.HasSuffix(info.Name(), ".md") {
+			relPath, _ := filepath.Rel(rootPath, path)
+			files = append(files, relPath)
 		}
-
-		paths = append(paths, relPath)
 		return nil
 	})
 
-	if err != nil {
-		return nil, fmt.Errorf("failed to scan vault: %w", err)
-	}
-
-	return paths, nil
+	return files, err
 }
 
 // AtomicWrite гарантирует безопасную запись файла даже при агрессивной работе Google Drive.
+// Отлично пишет сырые бинарные данные ([]byte) без искажений.
 func AtomicWrite(targetPath string, data []byte) error {
 	dir := filepath.Dir(targetPath)
-	
-	// Создаем целевую директорию, если ее нет
+
+	// Обязательно создаем папки, если ИИ или маршрутизатор придумал новую
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create target directory: %w", err)
+		return fmt.Errorf("vfs: failed to create directory %s: %w", dir, err)
 	}
 
-	// Генерируем уникальное имя для временного файла, чтобы избежать конфликтов при параллельной записи
-	base := filepath.Base(targetPath)
-	tempPath := filepath.Join(dir, fmt.Sprintf("%s.%d.tmp", base, rand.Int63()))
-
-	f, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
+	tmpFile := targetPath + ".tmp"
+	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+		return fmt.Errorf("vfs: failed to write temp file: %w", err)
 	}
 
-	// Отложенная очистка мусора на случай паники или провала переименования
-	var renameDone bool
-	defer func() {
-		if !renameDone {
-			_ = os.Remove(tempPath)
-		}
-	}()
-
-	// Пишем данные
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		return fmt.Errorf("failed to write data: %w", err)
-	}
-
-	// Форсируем сброс буферов ОС на диск
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return fmt.Errorf("failed to sync data to disk: %w", err)
-	}
-	f.Close() // Обязательно закрываем файл ДО переименования (иначе Windows заблокирует файл)
-
-	// Механизм Exponential Backoff для переименования (обход блокировок Google Drive)
-	return withRetry(func() error {
-		err := os.Rename(tempPath, targetPath)
-		if err == nil {
-			renameDone = true
-		}
-		return err
+	err := withRetry(func() error {
+		return os.Rename(tmpFile, targetPath)
 	})
+
+	if err != nil {
+		os.Remove(tmpFile) // Очистка мусора при ошибке
+		return fmt.Errorf("vfs: failed to atomically rename file: %w", err)
+	}
+
+	return nil
 }
 
-// SafeMove безопасно перемещает файл из oldPath в newPath с учетом блокировок диска.
+// SafeMove переносит файл, откатываясь к копированию, если Rename не сработал.
 func SafeMove(oldPath, newPath string) error {
 	dir := filepath.Dir(newPath)
-	
-	// Создаем целевую директорию перед перемещением, если ее нет
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create target directory for move: %w", err)
+		return err
 	}
 
-	return withRetry(func() error {
+	err := withRetry(func() error {
 		return os.Rename(oldPath, newPath)
 	})
-}
 
-// withRetry выполняет функцию с экспоненциальной задержкой в случае ошибки (Access Denied / Sharing Violation).
-func withRetry(operation func() error) error {
-	var lastErr error
-	delay := time.Duration(baseDelayMs) * time.Millisecond
-
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		err := operation()
-		if err == nil {
-			return nil // Успех
+	if err != nil {
+		// Fallback к чтению и записи, если rename не работает между дисками
+		data, readErr := os.ReadFile(oldPath)
+		if readErr != nil {
+			return fmt.Errorf("failed rename and fallback read: %v, %v", err, readErr)
 		}
-		
-		lastErr = err
-		
-		// Если это не последняя попытка, ждем перед следующим шагом
-		if attempt < maxRetries-1 {
-			time.Sleep(delay)
-			
-			// Экспоненциальный рост + небольшой джиттер (шорт-рандом), чтобы избежать Thundering Herd
-			delay *= 2
-			jitter := time.Duration(rand.Intn(50)) * time.Millisecond
-			delay += jitter
-			
-			if delay > time.Duration(maxDelayMs)*time.Millisecond {
-				delay = time.Duration(maxDelayMs) * time.Millisecond
-			}
+		if writeErr := AtomicWrite(newPath, data); writeErr != nil {
+			return fmt.Errorf("failed rename and fallback write: %v, %v", err, writeErr)
 		}
+		os.Remove(oldPath)
 	}
 
-	return fmt.Errorf("operation failed after %d retries, last error: %w", maxRetries, lastErr)
+	return nil
+}
+
+// withRetry выполняет операцию с экспоненциальной задержкой и джиттером.
+func withRetry(operation func() error) error {
+	var err error
+	for i := 0; i < maxRetries; i++ {
+		err = operation()
+		if err == nil {
+			return nil
+		}
+
+		delay := time.Duration(baseDelayMs<<i) * time.Millisecond
+		if delay > maxDelayMs*time.Millisecond {
+			delay = maxDelayMs * time.Millisecond
+		}
+
+		// Защита от panic: rand.Intn требует значение > 0
+		jitterMax := int(delay / 2)
+		if jitterMax <= 0 {
+			jitterMax = 1
+		}
+		jitter := time.Duration(rand.Intn(jitterMax))
+
+		time.Sleep(delay + jitter)
+	}
+	return err
 }
