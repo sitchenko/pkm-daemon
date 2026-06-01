@@ -12,32 +12,34 @@ import (
 )
 
 // DownloadAndSaveMedia определяет тип файла, скачивает его и сохраняет в хранилище Obsidian.
-// Возвращает строку с готовой Obsidian-ссылкой вида ![[Photo_YYYYMMDD_HHMMSS.ext]]
-func DownloadAndSaveMedia(c telebot.Context, bot *telebot.Bot, vaultPath string) (string, error) {
+// Возвращает строку с готовой ссылкой, бинарные данные, MIME-тип и ошибку.
+func DownloadAndSaveMedia(c telebot.Context, bot *telebot.Bot, vaultPath string) (string, []byte, string, error) {
 	var fileID string
 	var ext string
 	var folder string
 	var prefix string
+	var mimeType string
 
 	msg := c.Message()
 
-	// 1. Определение типа медиафайла
 	if msg.Photo != nil {
-		// Берем фото в максимальном разрешении (telebot отдает массив, где последний элемент — лучший)
 		fileID = msg.Photo.FileID
 		ext = ".jpg"
-		folder = "Photos"
+		folder = "📸 Фото"
 		prefix = "Photo"
+		mimeType = "image/jpeg"
 	} else if msg.Voice != nil {
 		fileID = msg.Voice.FileID
 		ext = ".ogg"
-		folder = "Voice"
+		folder = "🎙️ Голосовые"
 		prefix = "Voice"
+		mimeType = "audio/ogg"
 	} else if msg.Video != nil {
 		fileID = msg.Video.FileID
 		ext = ".mp4"
-		folder = "Videos"
+		folder = "🎥 Видео"
 		prefix = "Video"
+		mimeType = "video/mp4"
 	} else if msg.Document != nil {
 		fileID = msg.Document.FileID
 		if msg.Document.FileName != "" {
@@ -45,44 +47,44 @@ func DownloadAndSaveMedia(c telebot.Context, bot *telebot.Bot, vaultPath string)
 		} else {
 			ext = ".dat"
 		}
-		folder = "Files"
+		folder = "📁 Файлы"
 		prefix = "Doc"
+		mimeType = msg.Document.MIME
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
 	} else {
-		return "", fmt.Errorf("unsupported media type")
+		return "", nil, "", fmt.Errorf("unsupported media type")
 	}
 
-	// 2. Получение объекта файла через API Telegram
 	file, err := bot.FileByID(fileID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get file info by ID: %w", err)
+		return "", nil, "", fmt.Errorf("failed to get file info by ID: %w", err)
 	}
 
-	// 3. Скачивание файла в поток
 	readCloser, err := bot.File(&file)
 	if err != nil {
-		return "", fmt.Errorf("failed to download file stream: %w", err)
+		return "", nil, "", fmt.Errorf("failed to download file stream: %w", err)
 	}
 	defer readCloser.Close()
 
-	// 4. Чтение бинарных данных в память
 	data, err := io.ReadAll(readCloser)
 	if err != nil {
-		return "", fmt.Errorf("failed to read file data into memory: %w", err)
+		return "", nil, "", fmt.Errorf("failed to read file data into memory: %w", err)
 	}
 
-	// 5. Генерация имени и путей
+	// ИСПРАВЛЕНИЕ: Добавляем ID сообщения, чтобы имена файлов не конфликтовали в рамках одной секунды
+	msgID := msg.ID
 	timestamp := time.Now().Format("20060102_150405")
-	fileName := fmt.Sprintf("%s_%s%s", prefix, timestamp, ext)
+	fileName := fmt.Sprintf("%s_%s_%d%s", prefix, timestamp, msgID, ext)
 
 	targetDir := filepath.Join(vaultPath, "00_Медиа", folder)
 	fullPath := filepath.Join(targetDir, fileName)
 
-	// 6. Безопасное сохранение бинарных данных через VFS
 	if err := vfs.AtomicWrite(fullPath, data); err != nil {
-		return "", fmt.Errorf("failed to save media file to vfs: %w", err)
+		return "", nil, "", fmt.Errorf("failed to save media file to vfs: %w", err)
 	}
 
-	// 7. Возврат стандартной ссылки Obsidian
 	obsidianLink := fmt.Sprintf("![[%s]]", fileName)
-	return obsidianLink, nil
+	return obsidianLink, data, mimeType, nil
 }

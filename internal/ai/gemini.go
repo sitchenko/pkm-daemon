@@ -2,6 +2,7 @@ package ai
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,44 +40,60 @@ func (c *Client) getNextKey() string {
 	return key
 }
 
-func (c *Client) AnalyzeNote(content string, filesList []string) (*AnalysisResult, error) {
+func (c *Client) AnalyzeNote(content string, filesList []string, mediaBytes []byte, mimeType string) (*AnalysisResult, error) {
 	filesStr := strings.Join(filesList, ", ")
 
+	// ИСПРАВЛЕНИЕ: Убрали лишнюю логику. Оставили строгое ТАБУ на создание корневых папок.
 	prompt := fmt.Sprintf(`СИСТЕМНАЯ ИНСТРУКЦИЯ:
-Ты — системный архитектор базы знаний Obsidian. Проанализируй текст и верни СТРОГО JSON.
+Ты — системный архитектор базы знаний Obsidian. Твоя задача — классифицировать заметку по методологии PARA. Верни СТРОГО JSON.
+
+ИНСТРУКЦИЯ ПО МЕДИА:
+Если тебе передано аудио/фото, проанализируй его суть. Обязательно сохрани все Markdown-ссылки (например, ![[Photo_...]] или ![[Voice_...]]) из текста пользователя и включи их в поле "content" итоговой заметки.
 
 АЛГОРИТМ МАРШРУТИЗАЦИИ:
-1. Изучи пути: [%s]. Если есть подходящая папка -> "action": "create", "target_folder": используй ПУТЬ из списка.
-2. Иначе придумай новую категорию. ИМЕНОВАНИЕ ПАПОК: формат "ЭМОДЗИ Название" (напр. '🎓 Учеба').
+1. Изучи список существующих путей: [%s].
+2. ЕСЛИ суть заметки подходит под одну из СУЩЕСТВУЮЩИХ папок -> "action": "create", "target_folder": используй ПУТЬ из списка.
+3. ЕСЛИ подходящей папки НЕТ, ты можешь придумать новую категорию, НО соблюдай строгое правило:
+   - ТАБУ: НИКОГДА не создавай новые корневые папки (например, "06_Новая", "Заметки" или просто папки с эмодзи в корне).
+   - Разрешено создавать только ПОДПАПКИ внутри существующих главных разделов из переданного списка (например, внутри "02_Ресурсы" создай "02_Ресурсы/🐶 Животные"). ИМЕНОВАНИЕ НОВЫХ ПОДПАПОК: формат "ЭМОДЗИ Название".
 
-ПРАВИЛА:
-3. "file_name": английский, snake_case.
-4. "title": Человекочитаемый заголовок.
-5. "is_task": Если есть задачи, true. "tasks": массив строк.
-6. "reminders": Если в тексте есть дедлайны/время, верни МАССИВ объектов (каждое отдельное время = отдельный объект).
+ПРАВИЛА (КРИТИЧЕСКИ ВАЖНО):
+4. "file_name": ОБЯЗАТЕЛЬНО переведи на АНГЛИЙСКИЙ язык, в нижнем регистре (snake_case). Пример: beagle_care. Дату в это поле НЕ пиши.
+5. "title": Человекочитаемый заголовок.
+6. "is_task": Если есть задачи, true. "tasks": массив строк.
+7. "reminders": Если в тексте есть дедлайны/время, верни МАССИВ объектов ({"time": "2026-06-02T17:00:00Z", "text": "Текст"}).
 
 ФОРМАТ ОТВЕТА (JSON):
 {
   "action": "create",
-  "target_folder": "01_Projects/🎓 Диплом",
-  "file_name": "diploma_check",
-  "title": "Diploma work",
-  "tags": ["образование"],
-  "is_task": true,
-  "priority": "High",
-  "reminders": [
-    {"time": "2026-06-02T17:00:00Z", "text": "Взять ноутбук на тренировку"},
-    {"time": "2026-06-02T18:30:00Z", "text": "Занести ноутбук бабушке"}
-  ],
-  "content": "Описание...",
-  "tasks": ["Купить страховку", "Собрать снаряжение"]
+  "target_folder": "02_Ресурсы/🐶 Собаки",
+  "file_name": "beagle_care",
+  "title": "Уход за биглем",
+  "tags": ["животные"],
+  "is_task": false,
+  "priority": "Low",
+  "reminders": [],
+  "content": "![[Photo_20260601_150405.jpg]]\n\nИнтересная статья про...",
+  "tasks": []
 }
 
 ТЕКСТ ПОЛЬЗОВАТЕЛЯ:
 %s`, filesStr, content)
 
+	parts := []geminiPart{}
+
+	if len(mediaBytes) > 0 && mimeType != "" {
+		parts = append(parts, geminiPart{
+			InlineData: &geminiInlineData{
+				MimeType: mimeType,
+				Data:     base64.StdEncoding.EncodeToString(mediaBytes),
+			},
+		})
+	}
+	parts = append(parts, geminiPart{Text: prompt})
+
 	reqBody := geminiRequest{
-		Contents: []geminiContent{{Parts: []geminiPart{{Text: prompt}}}},
+		Contents: []geminiContent{{Parts: parts}},
 	}
 	payload, _ := json.Marshal(reqBody)
 
@@ -104,7 +121,9 @@ func (c *Client) AnalyzeNote(content string, filesList []string) (*AnalysisResul
 		}
 
 		var geminiResp geminiResponse
-		if err := json.Unmarshal(bodyBytes, &geminiResp); err != nil { return nil, err }
+		if err := json.Unmarshal(bodyBytes, &geminiResp); err != nil {
+			return nil, err
+		}
 		if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
 			return nil, fmt.Errorf("empty response")
 		}
@@ -119,7 +138,9 @@ func (c *Client) AnalyzeNote(content string, filesList []string) (*AnalysisResul
 		}
 
 		var result AnalysisResult
-		if err := json.Unmarshal([]byte(rawText), &result); err != nil { return nil, err }
+		if err := json.Unmarshal([]byte(rawText), &result); err != nil {
+			return nil, err
+		}
 		return &result, nil
 	}
 	return nil, fmt.Errorf("ai failed after %d retries", maxRetries)

@@ -20,18 +20,14 @@ func ScanVault(rootPath string) ([]string, error) {
 	var files []string
 
 	err := filepath.Walk(rootPath, func(path string, info os.FileInfo, err error) error {
-		// ИГНОРИРУЕМ ОШИБКИ: Если файл (например, desktop.ini) заблокирован или исчез
-		// во время сканирования, мы просто пропускаем его и идем дальше.
 		if err != nil {
 			return nil
 		}
 
-		// Пропускаем скрытые папки (например, .obsidian, .git)
 		if info.IsDir() && strings.HasPrefix(info.Name(), ".") {
 			return filepath.SkipDir
 		}
 
-		// Сохраняем только Markdown файлы
 		if !info.IsDir() && strings.HasSuffix(info.Name(), ".md") {
 			relPath, _ := filepath.Rel(rootPath, path)
 			files = append(files, relPath)
@@ -47,7 +43,6 @@ func ScanVault(rootPath string) ([]string, error) {
 func AtomicWrite(targetPath string, data []byte) error {
 	dir := filepath.Dir(targetPath)
 
-	// Обязательно создаем папки, если ИИ или маршрутизатор придумал новую
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("vfs: failed to create directory %s: %w", dir, err)
 	}
@@ -109,7 +104,6 @@ func withRetry(operation func() error) error {
 			delay = maxDelayMs * time.Millisecond
 		}
 
-		// Защита от panic: rand.Intn требует значение > 0
 		jitterMax := int(delay / 2)
 		if jitterMax <= 0 {
 			jitterMax = 1

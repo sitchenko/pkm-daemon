@@ -12,7 +12,7 @@ type AnalysisResult struct {
 	Priority         string         `json:"priority"`
 	Content          string         `json:"content"`
 	Tasks            []string       `json:"tasks"`
-	Reminders        []ReminderInfo `json:"reminders"` // Изменено на массив
+	Reminders        []ReminderInfo `json:"reminders"`
 }
 
 type ReminderInfo struct {
@@ -20,6 +20,7 @@ type ReminderInfo struct {
 	Text string `json:"text"`
 }
 
+// Внутренние структуры для запросов к Gemini API
 type geminiRequest struct {
 	Contents []geminiContent `json:"contents"`
 }
@@ -29,7 +30,13 @@ type geminiContent struct {
 }
 
 type geminiPart struct {
-	Text string `json:"text"`
+	Text       string            `json:"text,omitempty"`
+	InlineData *geminiInlineData `json:"inlineData,omitempty"` // Строго camelCase для Google API
+}
+
+type geminiInlineData struct {
+	MimeType string `json:"mimeType"` // Строго camelCase
+	Data     string `json:"data"`     // base64 payload
 }
 
 type geminiResponse struct {

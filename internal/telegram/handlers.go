@@ -3,7 +3,9 @@ package telegram
 import (
 	"fmt"
 	"log/slog"
-	"path/filepath"
+	"strings"
+	"sync"
+	"time"
 
 	"gopkg.in/telebot.v3"
 
@@ -13,7 +15,16 @@ import (
 	"pkm-daemon/internal/vfs"
 )
 
-// Обработчик простых текстовых сообщений
+var albumCache sync.Map
+var albumCacheMu sync.Mutex // Глобальный мьютекс для защиты создания альбомов от Race Condition
+
+type albumData struct {
+	Contexts   []telebot.Context
+	LoadingMsg *telebot.Message
+	Timer      *time.Timer
+	mu         sync.Mutex // Локальный мьютекс для защиты данных конкретного альбома
+}
+
 func (b *Bot) handleText(c telebot.Context) error {
 	text := c.Text()
 	if text == "" {
@@ -27,63 +38,135 @@ func (b *Bot) handleText(c telebot.Context) error {
 		b.log.Error("Failed to send loading message", slog.Any("error", err))
 	}
 
-	go b.processNotePipelineAsync(c, text, loadingMsg)
+	go b.processNotePipelineAsync(c, text, nil, "", loadingMsg)
 	return nil
 }
 
-// Обработчик медиафайлов (Фото, Аудио, Видео, Документы)
 func (b *Bot) handleMedia(c telebot.Context) error {
 	b.log.Info("Received media message", slog.String("user", c.Sender().Username))
 
-	loadingMsg, err := b.bot.Send(c.Chat(), "📥 Скачиваю медиафайл...")
-	if err != nil {
-		b.log.Error("Failed to send loading message", slog.Any("error", err))
+	groupID := c.Message().AlbumID
+	isAlbum := groupID != ""
+	if !isAlbum {
+		groupID = fmt.Sprintf("single_%d", c.Message().ID)
 	}
 
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				b.log.Error("Panic in handleMedia download goroutine", slog.Any("panic", r))
-				if loadingMsg != nil {
-					b.bot.Edit(loadingMsg, "❌ Критическая ошибка при скачивании медиа!")
-				}
-			}
-		}()
+	// 1. Атомарное получение или создание альбома
+	albumCacheMu.Lock()
+	val, loaded := albumCache.Load(groupID)
+	var album *albumData
 
-		// 1. Скачиваем медиа
-		obsidianLink, err := DownloadAndSaveMedia(c, b.bot, b.cfg.ObsidianPath)
+	if !loaded {
+		album = &albumData{}
+		albumCache.Store(groupID, album)
+	} else {
+		album = val.(*albumData)
+	}
+	albumCacheMu.Unlock()
+
+	// 2. Безопасная работа с данными альбома
+	album.mu.Lock()
+	album.Contexts = append(album.Contexts, c)
+
+	if !loaded {
+		// Мы - первое сообщение из группы. Инициализируем UI и таймер.
+		loadingMsg, err := b.bot.Send(c.Chat(), "📥 Принимаю медиафайл(ы)...")
 		if err != nil {
-			b.log.Error("Failed to download and save media", slog.Any("error", err))
-			if loadingMsg != nil {
-				b.bot.Edit(loadingMsg, "❌ Ошибка при сохранении медиафайла.")
-			}
-			return
+			b.log.Error("Failed to send loading message", slog.Any("error", err))
+		}
+		album.LoadingMsg = loadingMsg
+
+		duration := 2 * time.Second
+		if !isAlbum {
+			duration = 10 * time.Millisecond
 		}
 
-		// 2. Извлекаем или генерируем подпись
-		caption := c.Message().Caption
-		if c.Message().Voice != nil && caption == "" {
-			caption = "Голосовая заметка"
-		} else if caption == "" {
-			caption = "Медиафайл"
+		album.Timer = time.AfterFunc(duration, func() {
+			albumCache.Delete(groupID)
+			b.processAlbum(album)
+		})
+	} else {
+		// Мы - последующее сообщение. Просто сбрасываем таймер.
+		if isAlbum && album.Timer != nil {
+			album.Timer.Reset(2 * time.Second)
 		}
-
-		// 3. Формируем комбинированный текст для ИИ
-		combinedText := fmt.Sprintf("%s\n\n%s", obsidianLink, caption)
-
-		if loadingMsg != nil {
-			b.bot.Edit(loadingMsg, "⏳ Медиа скачано. Анализирую (Gemini)...")
-		}
-
-		// 4. Передаем в общий пайплайн
-		b.processNotePipelineAsync(c, combinedText, loadingMsg)
-	}()
+	}
+	album.mu.Unlock()
 
 	return nil
 }
 
-// Общий унифицированный пайплайн для анализа и сохранения (DRY)
-func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, loadingMsg *telebot.Message) {
+func (b *Bot) processAlbum(album *albumData) {
+	album.mu.Lock()
+	contexts := album.Contexts
+	loadingMsg := album.LoadingMsg
+	album.mu.Unlock()
+
+	if len(contexts) == 0 {
+		return
+	}
+
+	if loadingMsg != nil {
+		b.bot.Edit(loadingMsg, "📥 Сохраняю файлы локально...")
+	}
+
+	var links []string
+	var finalCaption string
+	var primaryMediaBytes []byte
+	var primaryMimeType string
+
+	for _, c := range contexts {
+		obsidianLink, data, mimeType, err := DownloadAndSaveMedia(c, b.bot, b.cfg.ObsidianPath)
+		if err != nil {
+			b.log.Error("Failed to download media", slog.Any("error", err))
+			continue
+		}
+		links = append(links, obsidianLink)
+
+		// Подпись обычно прикреплена только к одному из файлов альбома
+		if cap := c.Message().Caption; cap != "" {
+			finalCaption = cap
+		}
+
+		// Берем первый подходящий медиафайл для визуального анализа Gemini
+		if len(primaryMediaBytes) == 0 {
+			primaryMediaBytes = data
+			primaryMimeType = mimeType
+		}
+
+		// Если в альбоме есть голосовое, отдаем предпочтение ему для транскрибации
+		if c.Message().Voice != nil {
+			primaryMediaBytes = data
+			primaryMimeType = mimeType
+			if finalCaption == "" {
+				finalCaption = "Голосовая заметка"
+			}
+		}
+	}
+
+	if len(links) == 0 {
+		if loadingMsg != nil {
+			b.bot.Edit(loadingMsg, "❌ Ошибка скачивания файлов.")
+		}
+		return
+	}
+
+	if finalCaption == "" {
+		finalCaption = "Медиафайл(ы)"
+	}
+
+	// Склеиваем все сгенерированные Markdown-ссылки
+	combinedText := fmt.Sprintf("%s\n\n%s", strings.Join(links, "\n"), finalCaption)
+
+	if loadingMsg != nil {
+		b.bot.Edit(loadingMsg, "⏳ Медиа сохранено. Анализирую (Gemini)...")
+	}
+
+	// Передаем весь альбом в ИИ как один запрос
+	b.processNotePipelineAsync(contexts[0], combinedText, primaryMediaBytes, primaryMimeType, loadingMsg)
+}
+
+func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, mediaBytes []byte, mimeType string, loadingMsg *telebot.Message) {
 	defer func() {
 		if r := recover(); r != nil {
 			b.log.Error("Panic in pipeline goroutine", slog.Any("panic", r))
@@ -102,7 +185,7 @@ func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, loadingMs
 		return
 	}
 
-	aiResult, err := b.ai.AnalyzeNote(text, scannedPaths)
+	aiResult, err := b.ai.AnalyzeNote(text, scannedPaths, mediaBytes, mimeType)
 	if err != nil {
 		b.log.Error("AI Analysis failed", slog.Any("error", err))
 		if loadingMsg != nil {
@@ -120,7 +203,7 @@ func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, loadingMs
 		return
 	}
 
-	baseID, err := router.RouteAndSave(*aiResult, mdContent, b.cfg.ObsidianPath, b.db)
+	baseID, finalFilePath, err := router.RouteAndSave(aiResult, mdContent, b.cfg.ObsidianPath, b.db)
 	if err != nil {
 		b.log.Error("Router failed", slog.Any("error", err))
 		if loadingMsg != nil {
@@ -142,9 +225,8 @@ func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, loadingMs
 	}
 
 	if loadingMsg != nil {
-		// Динамическое сообщение в зависимости от типа входных данных
 		finalText := "✅ Заметка успешно создана и сохранена!"
-		if c.Message().Photo != nil || c.Message().Voice != nil || c.Message().Video != nil || c.Message().Document != nil {
+		if len(mediaBytes) > 0 || strings.Contains(text, "![[") {
 			finalText = "✅ Медиа сохранено и заметка успешно создана!"
 		}
 
@@ -157,7 +239,7 @@ func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, loadingMs
 			MessageID:      int64(loadingMsg.ID),
 			ChatID:         loadingMsg.Chat.ID,
 			TelegramUserID: c.Sender().ID,
-			FilePath:       filepath.Join(b.cfg.ObsidianPath, aiResult.TargetFolder, aiResult.FileName+".md"),
+			FilePath:       finalFilePath,
 		}
 		b.db.SaveMessage(&msgLink)
 
