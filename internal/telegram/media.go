@@ -34,12 +34,31 @@ func DownloadAndSaveMedia(c telebot.Context, bot *telebot.Bot, vaultPath string)
 		folder = "🎙️ Голосовые"
 		prefix = "Voice"
 		mimeType = "audio/ogg"
+	} else if msg.VideoNote != nil { // Обработка кружочков
+		fileID = msg.VideoNote.FileID
+		ext = ".mp4"
+		folder = "🎥 Видео"
+		prefix = "VideoNote"
+		mimeType = "video/mp4"
 	} else if msg.Video != nil {
 		fileID = msg.Video.FileID
 		ext = ".mp4"
 		folder = "🎥 Видео"
 		prefix = "Video"
 		mimeType = "video/mp4"
+	} else if msg.Audio != nil { // Обработка музыки/подкастов
+		fileID = msg.Audio.FileID
+		if msg.Audio.FileName != "" {
+			ext = filepath.Ext(msg.Audio.FileName)
+		} else {
+			ext = ".mp3"
+		}
+		folder = "🎵 Музыка"
+		prefix = "Audio"
+		mimeType = msg.Audio.MIME
+		if mimeType == "" {
+			mimeType = "audio/mpeg"
+		}
 	} else if msg.Document != nil {
 		fileID = msg.Document.FileID
 		if msg.Document.FileName != "" {
@@ -73,7 +92,6 @@ func DownloadAndSaveMedia(c telebot.Context, bot *telebot.Bot, vaultPath string)
 		return "", nil, "", fmt.Errorf("failed to read file data into memory: %w", err)
 	}
 
-	// ИСПРАВЛЕНИЕ: Добавляем ID сообщения, чтобы имена файлов не конфликтовали в рамках одной секунды
 	msgID := msg.ID
 	timestamp := time.Now().Format("20060102_150405")
 	fileName := fmt.Sprintf("%s_%s_%d%s", prefix, timestamp, msgID, ext)

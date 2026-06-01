@@ -16,13 +16,13 @@ import (
 )
 
 var albumCache sync.Map
-var albumCacheMu sync.Mutex // Глобальный мьютекс для защиты создания альбомов от Race Condition
+var albumCacheMu sync.Mutex
 
 type albumData struct {
 	Contexts   []telebot.Context
 	LoadingMsg *telebot.Message
 	Timer      *time.Timer
-	mu         sync.Mutex // Локальный мьютекс для защиты данных конкретного альбома
+	mu         sync.Mutex
 }
 
 func (b *Bot) handleText(c telebot.Context) error {
@@ -51,7 +51,6 @@ func (b *Bot) handleMedia(c telebot.Context) error {
 		groupID = fmt.Sprintf("single_%d", c.Message().ID)
 	}
 
-	// 1. Атомарное получение или создание альбома
 	albumCacheMu.Lock()
 	val, loaded := albumCache.Load(groupID)
 	var album *albumData
@@ -64,12 +63,10 @@ func (b *Bot) handleMedia(c telebot.Context) error {
 	}
 	albumCacheMu.Unlock()
 
-	// 2. Безопасная работа с данными альбома
 	album.mu.Lock()
 	album.Contexts = append(album.Contexts, c)
 
 	if !loaded {
-		// Мы - первое сообщение из группы. Инициализируем UI и таймер.
 		loadingMsg, err := b.bot.Send(c.Chat(), "📥 Принимаю медиафайл(ы)...")
 		if err != nil {
 			b.log.Error("Failed to send loading message", slog.Any("error", err))
@@ -86,7 +83,6 @@ func (b *Bot) handleMedia(c telebot.Context) error {
 			b.processAlbum(album)
 		})
 	} else {
-		// Мы - последующее сообщение. Просто сбрасываем таймер.
 		if isAlbum && album.Timer != nil {
 			album.Timer.Reset(2 * time.Second)
 		}
@@ -123,24 +119,29 @@ func (b *Bot) processAlbum(album *albumData) {
 		}
 		links = append(links, obsidianLink)
 
-		// Подпись обычно прикреплена только к одному из файлов альбома
 		if cap := c.Message().Caption; cap != "" {
 			finalCaption = cap
 		}
 
-		// Берем первый подходящий медиафайл для визуального анализа Gemini
-		if len(primaryMediaBytes) == 0 {
-			primaryMediaBytes = data
-			primaryMimeType = mimeType
-		}
-
-		// Если в альбоме есть голосовое, отдаем предпочтение ему для транскрибации
-		if c.Message().Voice != nil {
+		// Если это аудио, войс или кружок - отдаем ИИ на транскрибацию
+		if c.Message().Voice != nil || c.Message().Audio != nil || c.Message().VideoNote != nil {
 			primaryMediaBytes = data
 			primaryMimeType = mimeType
 			if finalCaption == "" {
-				finalCaption = "Голосовая заметка"
+				if c.Message().Voice != nil {
+					finalCaption = "Голосовая заметка"
+				}
+				if c.Message().Audio != nil {
+					finalCaption = "Аудиозапись/Музыка"
+				}
+				if c.Message().VideoNote != nil {
+					finalCaption = "Видеосообщение (Кружок)"
+				}
 			}
+		} else if len(primaryMediaBytes) == 0 {
+			// Если звука нет, передаем первое фото/видео для анализа картинки
+			primaryMediaBytes = data
+			primaryMimeType = mimeType
 		}
 	}
 
@@ -155,14 +156,12 @@ func (b *Bot) processAlbum(album *albumData) {
 		finalCaption = "Медиафайл(ы)"
 	}
 
-	// Склеиваем все сгенерированные Markdown-ссылки
 	combinedText := fmt.Sprintf("%s\n\n%s", strings.Join(links, "\n"), finalCaption)
 
 	if loadingMsg != nil {
 		b.bot.Edit(loadingMsg, "⏳ Медиа сохранено. Анализирую (Gemini)...")
 	}
 
-	// Передаем весь альбом в ИИ как один запрос
 	b.processNotePipelineAsync(contexts[0], combinedText, primaryMediaBytes, primaryMimeType, loadingMsg)
 }
 
@@ -226,7 +225,8 @@ func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, mediaByte
 
 	if loadingMsg != nil {
 		finalText := "✅ Заметка успешно создана и сохранена!"
-		if len(mediaBytes) > 0 || strings.Contains(text, "![[") {
+		msg := c.Message()
+		if msg.Photo != nil || msg.Voice != nil || msg.Video != nil || msg.Document != nil || msg.VideoNote != nil || msg.Audio != nil || len(mediaBytes) > 0 {
 			finalText = "✅ Медиа сохранено и заметка успешно создана!"
 		}
 

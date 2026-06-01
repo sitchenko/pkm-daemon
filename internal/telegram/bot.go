@@ -74,9 +74,11 @@ func (b *Bot) Stop() {
 func (b *Bot) setupHandlers() {
 	b.bot.Handle(telebot.OnText, b.handleText)
 
-	// Подключаем слушатели на медиа (Этап 16)
+	// Подключаем слушатели на все виды медиа
 	b.bot.Handle(telebot.OnPhoto, b.handleMedia)
 	b.bot.Handle(telebot.OnVoice, b.handleMedia)
 	b.bot.Handle(telebot.OnVideo, b.handleMedia)
 	b.bot.Handle(telebot.OnDocument, b.handleMedia)
+	b.bot.Handle(telebot.OnVideoNote, b.handleMedia) // Кружочки
+	b.bot.Handle(telebot.OnAudio, b.handleMedia)     // Музыка и подкасты
 }
