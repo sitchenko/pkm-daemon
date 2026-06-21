@@ -3,20 +3,23 @@ package telegram
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"gopkg.in/telebot.v3"
 
+	"pkm-daemon/internal/fsm"
 	"pkm-daemon/internal/markdown"
 	"pkm-daemon/internal/router"
 	"pkm-daemon/internal/storage"
+	pkgSync "pkm-daemon/internal/sync"
 	"pkm-daemon/internal/vfs"
 )
 
 var albumCache sync.Map
-var albumCacheMu sync.Mutex
 
 type albumData struct {
 	Contexts   []telebot.Context
@@ -25,10 +28,29 @@ type albumData struct {
 	mu         sync.Mutex
 }
 
+func (b *Bot) handleStart(c telebot.Context) error {
+	welcomeMsg := "привет! я твой персональный pkm-демон.\n\nотправь мне текст, голосовое, кружок или файл, и я превращу это в структурированную заметку с задачами."
+	return c.Send(welcomeMsg)
+}
+
 func (b *Bot) handleText(c telebot.Context) error {
 	text := c.Text()
 	if text == "" {
 		return nil
+	}
+
+	// Проверяем FSM
+	session, err := b.fsm.Get(c.Sender().ID)
+	if err == nil && session != nil && session.State == fsm.StateWaitReason {
+		taskUUID := session.ContextData
+		b.fsm.Clear(c.Sender().ID)
+		
+		err = pkgSync.ChangeTaskStatusAtomic(taskUUID, "Failed", text, b.db, b.cfg.ObsidianPath)
+		if err != nil {
+			b.log.Error("Failed to fail task", slog.Any("error", err))
+			return c.Send("❌ Ошибка при сохранении причины провала.")
+		}
+		return c.Send("✅ Задача провалена. Причина записана в базу.")
 	}
 
 	b.log.Info("Received text message", slog.String("user", c.Sender().Username))
@@ -51,17 +73,8 @@ func (b *Bot) handleMedia(c telebot.Context) error {
 		groupID = fmt.Sprintf("single_%d", c.Message().ID)
 	}
 
-	albumCacheMu.Lock()
-	val, loaded := albumCache.Load(groupID)
-	var album *albumData
-
-	if !loaded {
-		album = &albumData{}
-		albumCache.Store(groupID, album)
-	} else {
-		album = val.(*albumData)
-	}
-	albumCacheMu.Unlock()
+	val, loaded := albumCache.LoadOrStore(groupID, &albumData{})
+	album := val.(*albumData)
 
 	album.mu.Lock()
 	album.Contexts = append(album.Contexts, c)
@@ -184,7 +197,19 @@ func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, mediaByte
 		return
 	}
 
-	aiResult, err := b.ai.AnalyzeNote(text, scannedPaths, mediaBytes, mimeType)
+	// Фильтруем пути, чтобы ИИ мог выбрать только из разрешенных корневых папок
+	var allowedPaths []string
+	for _, p := range scannedPaths {
+		if strings.Contains(p, "Проекты") || strings.Contains(p, "Планы") || strings.Contains(p, "Ресурсы") {
+			allowedPaths = append(allowedPaths, p)
+		}
+	}
+	
+	if len(allowedPaths) == 0 {
+		allowedPaths = []string{"Проекты", "Планы", "Ресурсы"}
+	}
+
+	aiResult, err := b.ai.AnalyzeNote(text, allowedPaths, mediaBytes, mimeType)
 	if err != nil {
 		b.log.Error("AI Analysis failed", slog.Any("error", err))
 		if loadingMsg != nil {
@@ -212,23 +237,27 @@ func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, mediaByte
 	}
 
 	var markup *telebot.ReplyMarkup
+	markup = &telebot.ReplyMarkup{}
+	var rows []telebot.Row
+
 	if len(aiResult.Tasks) > 0 {
-		markup = &telebot.ReplyMarkup{}
-		var rows []telebot.Row
-		for i, taskText := range aiResult.Tasks {
-			taskUUID := fmt.Sprintf("%s-%d", baseID, i+1)
-			btn := markup.Data(fmt.Sprintf("✅ %s", shortenText(taskText, 35)), "btn_done", taskUUID)
-			rows = append(rows, markup.Row(btn))
+		webappURL := os.Getenv("WEBAPP_URL")
+		if webappURL == "" {
+			webappURL = "https://example.com" // Placeholder, user needs to set via .env
 		}
-		markup.Inline(rows...)
+		btnKanban := markup.WebApp("📊 Открыть Канбан", &telebot.WebApp{URL: webappURL})
+		rows = append(rows, markup.Row(btnKanban))
 	}
 
+	btnDelete := markup.Data("🗑️ Удалить заметку", "btn_del_note")
+	rows = append(rows, markup.Row(btnDelete))
+
+	markup.Inline(rows...)
+
 	if loadingMsg != nil {
-		finalText := "✅ Заметка успешно создана и сохранена!"
-		msg := c.Message()
-		if msg.Photo != nil || msg.Voice != nil || msg.Video != nil || msg.Document != nil || msg.VideoNote != nil || msg.Audio != nil || len(mediaBytes) > 0 {
-			finalText = "✅ Медиа сохранено и заметка успешно создана!"
-		}
+		dirPath := filepath.Dir(finalFilePath)
+		fileName := filepath.Base(finalFilePath)
+		finalText := fmt.Sprintf("✅ Успешно!\n📂 %s\n📄 %s", dirPath, fileName)
 
 		_, err = b.bot.Edit(loadingMsg, finalText, markup)
 		if err != nil {

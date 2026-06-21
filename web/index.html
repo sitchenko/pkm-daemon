@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Kanban</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            /* Fallbacks if Telegram theme is missing */
+            --tg-theme-bg-color: #ffffff;
+            --tg-theme-text-color: #000000;
+            --tg-theme-hint-color: #999999;
+            --tg-theme-secondary-bg-color: #f5f5f5;
+            
+            /* Custom Pastel/Monochrome variables */
+            --bg-color: var(--tg-theme-bg-color, #ffffff);
+            --text-color: var(--tg-theme-text-color, #000000);
+            --card-bg: #f9f9f9;
+            --card-border: #e0e0e0;
+            --column-bg: #fafafa;
+            --column-header: #333333;
+            --danger-bg: #ffebee;
+            --danger-text: #c62828;
+            --success-bg: #f1f8e9;
+            --success-text: #2e7d32;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        header {
+            padding: 16px;
+            text-align: center;
+            font-weight: 600;
+            font-size: 18px;
+            border-bottom: 1px solid var(--card-border);
+            background-color: var(--bg-color);
+            z-index: 10;
+        }
+
+        .board {
+            display: flex;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+            flex-grow: 1;
+            padding: 16px;
+            gap: 16px;
+            scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .column {
+            flex: 0 0 85vw;
+            max-width: 400px;
+            background-color: var(--column-bg);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            scroll-snap-align: center;
+            border: 1px solid var(--card-border);
+            max-height: 100%;
+        }
+
+        .column-header {
+            padding: 16px;
+            font-weight: 600;
+            color: var(--column-header);
+            border-bottom: 1px solid var(--card-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .task-list {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 12px;
+            min-height: 100px;
+        }
+
+        .task-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            padding: 14px;
+            margin-bottom: 10px;
+            font-size: 14px;
+            line-height: 1.4;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            cursor: grab;
+            transition: transform 0.2s, box-shadow 0.2s;
+            position: relative;
+        }
+
+        .task-card:active {
+            cursor: grabbing;
+        }
+
+        .task-card.dragging {
+            opacity: 0.5;
+            transform: scale(0.95);
+        }
+
+        .task-id {
+            font-size: 11px;
+            color: var(--tg-theme-hint-color);
+            margin-bottom: 6px;
+        }
+
+        .delete-zone {
+            position: absolute;
+            bottom: -100px; /* Hidden initially */
+            left: 0;
+            right: 0;
+            height: 80px;
+            background-color: var(--danger-bg);
+            color: var(--danger-text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            transition: bottom 0.3s;
+            z-index: 1000;
+            border-top: 2px dashed var(--danger-text);
+        }
+
+        .delete-zone.active {
+            bottom: 0;
+        }
+
+        .delete-zone.drag-over {
+            background-color: #ffcdd2;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+            padding: 20px;
+        }
+
+        .modal {
+            background: var(--bg-color);
+            padding: 24px;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .modal h3 {
+            margin-bottom: 12px;
+        }
+
+        .modal input {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 20px;
+            border: 1px solid var(--card-border);
+            border-radius: 8px;
+            font-size: 16px;
+            outline: none;
+        }
+
+        .modal .btn-group {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .btn {
+            padding: 10px 16px;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .btn-cancel {
+            background: #e0e0e0;
+            color: #333;
+        }
+
+        .btn-submit {
+            background: var(--text-color);
+            color: var(--bg-color);
+        }
+        
+        /* Modern Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: var(--card-border);
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+
+    <header>Мои Задачи</header>
+
+    <div class="board">
+        <div class="column" data-status="pending">
+            <div class="column-header">⏳ Ожидают (<span class="count">0</span>)</div>
+            <div class="task-list"></div>
+        </div>
+        <div class="column" data-status="In Progress">
+            <div class="column-header">▶️ В работе (<span class="count">0</span>)</div>
+            <div class="task-list"></div>
+        </div>
+        <div class="column" data-status="Done" style="background-color: var(--success-bg);">
+            <div class="column-header" style="color: var(--success-text);">✅ Готово (<span class="count">0</span>)</div>
+            <div class="task-list"></div>
+        </div>
+        <div class="column" data-status="Failed" style="background-color: #fffaf0;">
+            <div class="column-header" style="color: #e65100;">❌ Провалено (<span class="count">0</span>)</div>
+            <div class="task-list"></div>
+        </div>
+    </div>
+
+    <div class="delete-zone" id="deleteZone">
+        🗑️ Перетащите сюда для удаления
+    </div>
+
+    <!-- Modal for Result/Reason -->
+    <div class="modal-overlay" id="promptModal">
+        <div class="modal">
+            <h3 id="modalTitle">Укажите причину/результат</h3>
+            <input type="text" id="modalInput" placeholder="Введите текст...">
+            <div class="btn-group">
+                <button class="btn btn-cancel" id="btnCancel">Отмена</button>
+                <button class="btn btn-submit" id="btnSubmit">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        tg.ready();
+
+        // Check if theme matches telegram, though we use fallback CSS variables
+        if (tg.themeParams.bg_color) {
+            document.documentElement.style.setProperty('--bg-color', tg.themeParams.bg_color);
+            document.documentElement.style.setProperty('--text-color', tg.themeParams.text_color);
+            // Derive some monochrome pastel colors based on light/dark mode
+            const isDark = tg.colorScheme === 'dark';
+            document.documentElement.style.setProperty('--card-bg', isDark ? '#222' : '#fcfcfc');
+            document.documentElement.style.setProperty('--card-border', isDark ? '#333' : '#e0e0e0');
+            document.documentElement.style.setProperty('--column-bg', isDark ? '#1a1a1a' : '#f5f5f5');
+        }
+
+        const API_BASE = ''; // Set to full URL if hosting separate from API
+        let tasks = [];
+        
+        async function fetchTasks() {
+            try {
+                const res = await fetch(`${API_BASE}/api/tasks`);
+                tasks = await res.json();
+                renderBoard();
+            } catch (e) {
+                console.error("Failed to load tasks", e);
+                tg.showAlert("Не удалось загрузить задачи.");
+            }
+        }
+
+        function renderBoard() {
+            const columns = {
+                "pending": document.querySelector('[data-status="pending"] .task-list'),
+                "In Progress": document.querySelector('[data-status="In Progress"] .task-list'),
+                "Done": document.querySelector('[data-status="Done"] .task-list'),
+                "Failed": document.querySelector('[data-status="Failed"] .task-list'),
+            };
+
+            // Clear all
+            Object.values(columns).forEach(col => {
+                col.innerHTML = '';
+                col.parentElement.querySelector('.count').innerText = '0';
+            });
+
+            tasks.forEach(task => {
+                const status = task.KanbanStatus || 'pending';
+                const col = columns[status] || columns['pending'];
+                
+                const card = document.createElement('div');
+                card.className = 'task-card';
+                card.draggable = true;
+                card.dataset.id = task.TaskUUID;
+                
+                card.innerHTML = `
+                    <div class="task-id">#${task.TaskUUID}</div>
+                    <div class="task-content">${task.Content}</div>
+                `;
+                
+                setupDragEvents(card);
+                col.appendChild(card);
+            });
+
+            // Update counts
+            Object.keys(columns).forEach(key => {
+                const col = columns[key];
+                col.parentElement.querySelector('.count').innerText = col.children.length;
+            });
+        }
+
+        // --- Drag and Drop Logic ---
+        let draggedCard = null;
+        let originalStatus = null;
+        let deleteZoneTimer = null;
+
+        const deleteZone = document.getElementById('deleteZone');
+
+        function setupDragEvents(card) {
+            card.addEventListener('dragstart', (e) => {
+                draggedCard = card;
+                originalStatus = card.parentElement.parentElement.dataset.status;
+                setTimeout(() => card.classList.add('dragging'), 0);
+                
+                // Show delete zone
+                deleteZone.classList.add('active');
+            });
+
+            card.addEventListener('dragend', () => {
+                draggedCard.classList.remove('dragging');
+                draggedCard = null;
+                deleteZone.classList.remove('active');
+                deleteZone.classList.remove('drag-over');
+                renderBoard(); // reset visual state just in case
+            });
+
+            // Touch events for mobile
+            card.addEventListener('touchstart', handleTouchStart, {passive: false});
+            card.addEventListener('touchmove', handleTouchMove, {passive: false});
+            card.addEventListener('touchend', handleTouchEnd);
+        }
+
+        // HTML5 Drag over columns
+        document.querySelectorAll('.task-list').forEach(list => {
+            list.addEventListener('dragover', e => {
+                e.preventDefault();
+                const afterElement = getDragAfterElement(list, e.clientY);
+                if (afterElement == null) {
+                    list.appendChild(draggedCard);
+                } else {
+                    list.insertBefore(draggedCard, afterElement);
+                }
+            });
+            
+            list.addEventListener('drop', async e => {
+                e.preventDefault();
+                if (!draggedCard) return;
+                
+                const newStatus = list.parentElement.dataset.status;
+                if (newStatus !== originalStatus) {
+                    handleStatusChange(draggedCard.dataset.id, newStatus, originalStatus);
+                }
+            });
+        });
+
+        // Delete Zone Drop
+        deleteZone.addEventListener('dragover', e => {
+            e.preventDefault();
+            deleteZone.classList.add('drag-over');
+        });
+        deleteZone.addEventListener('dragleave', e => {
+            deleteZone.classList.remove('drag-over');
+        });
+        deleteZone.addEventListener('drop', e => {
+            e.preventDefault();
+            if (draggedCard) {
+                handleDeleteTask(draggedCard.dataset.id);
+            }
+        });
+
+        function getDragAfterElement(container, y) {
+            const draggableElements = [...container.querySelectorAll('.task-card:not(.dragging)')];
+            return draggableElements.reduce((closest, child) => {
+                const box = child.getBoundingClientRect();
+                const offset = y - box.top - box.height / 2;
+                if (offset < 0 && offset > closest.offset) {
+                    return { offset: offset, element: child };
+                } else {
+                    return closest;
+                }
+            }, { offset: Number.NEGATIVE_INFINITY }).element;
+        }
+
+        // Mobile Touch Polyfill (Simplified)
+        let touchStartX, touchStartY, initialCardX, initialCardY;
+        function handleTouchStart(e) {
+            // Simplified touch handling - in a real prod app use a library like SortableJS for mobile
+            // For now, we rely on click/tap to move if drag fails, but let's implement basic status change via tap
+            
+            // To keep it simple and robust for the prompt, tap card -> open action sheet
+            tg.showPopup({
+                title: 'Действие с задачей',
+                message: 'Выберите новый статус или действие:',
+                buttons: [
+                    {id: 'pending', type: 'default', text: '⏳ Ожидает'},
+                    {id: 'In Progress', type: 'default', text: '▶️ В работу'},
+                    {id: 'Done', type: 'default', text: '✅ Готово'},
+                    {id: 'Failed', type: 'destructive', text: '❌ Провалено'},
+                    {id: 'delete', type: 'destructive', text: '🗑️ Удалить'},
+                ]
+            }, (btnId) => {
+                if (!btnId) return;
+                const cardId = this.dataset.id;
+                const currentStatus = this.parentElement.parentElement.dataset.status;
+                
+                if (btnId === 'delete') {
+                    handleDeleteTask(cardId);
+                } else if (btnId !== currentStatus) {
+                    handleStatusChange(cardId, btnId, currentStatus);
+                }
+            });
+        }
+        function handleTouchMove(e) {}
+        function handleTouchEnd(e) {}
+
+        // --- Action Handlers ---
+
+        function handleDeleteTask(taskId) {
+            tg.showConfirm("Удалить задачу окончательно?", async (confirmed) => {
+                if (confirmed) {
+                    try {
+                        tg.MainButton.showProgress();
+                        await fetch(`${API_BASE}/api/delete_task`, {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({task_id: taskId})
+                        });
+                        tasks = tasks.filter(t => t.TaskUUID !== taskId);
+                        renderBoard();
+                        tg.HapticFeedback.notificationOccurred('success');
+                    } catch (e) {
+                        tg.showAlert("Ошибка удаления.");
+                        tg.HapticFeedback.notificationOccurred('error');
+                    } finally {
+                        tg.MainButton.hideProgress();
+                    }
+                }
+            });
+        }
+
+        function handleStatusChange(taskId, newStatus, oldStatus) {
+            if (newStatus === 'Done' || newStatus === 'Failed') {
+                showPrompt(newStatus === 'Done' ? 'Укажите результат выполнения:' : 'Укажите причину провала:', async (reason) => {
+                    if (reason !== null) { // null means cancel
+                        await saveStatusChange(taskId, newStatus, reason);
+                    } else {
+                        renderBoard(); // revert UI
+                    }
+                });
+            } else {
+                saveStatusChange(taskId, newStatus, '');
+            }
+        }
+
+        async function saveStatusChange(taskId, status, reason) {
+            try {
+                tg.MainButton.showProgress();
+                const res = await fetch(`${API_BASE}/api/update_task`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({task_id: taskId, status: status, reason: reason})
+                });
+                
+                if (!res.ok) throw new Error("Server error");
+                
+                // Update local state
+                const task = tasks.find(t => t.TaskUUID === taskId);
+                if (task) task.KanbanStatus = status;
+                renderBoard();
+                tg.HapticFeedback.notificationOccurred('success');
+            } catch (e) {
+                console.error(e);
+                tg.showAlert("Ошибка синхронизации.");
+                tg.HapticFeedback.notificationOccurred('error');
+                fetchTasks(); // Reload from server
+            } finally {
+                tg.MainButton.hideProgress();
+            }
+        }
+
+        // --- Custom Prompt Modal ---
+        const modal = document.getElementById('promptModal');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalInput = document.getElementById('modalInput');
+        let modalResolve = null;
+
+        function showPrompt(title, callback) {
+            modalTitle.innerText = title;
+            modalInput.value = '';
+            modal.style.display = 'flex';
+            modalInput.focus();
+            modalResolve = callback;
+        }
+
+        document.getElementById('btnCancel').onclick = () => {
+            modal.style.display = 'none';
+            if (modalResolve) modalResolve(null);
+        };
+
+        document.getElementById('btnSubmit').onclick = () => {
+            const val = modalInput.value.trim();
+            if (!val) {
+                tg.showAlert("Текст не может быть пустым.");
+                return;
+            }
+            modal.style.display = 'none';
+            if (modalResolve) modalResolve(val);
+        };
+
+        // Initialize
+        fetchTasks();
+    </script>
+</body>
+</html>

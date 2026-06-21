@@ -22,6 +22,8 @@ type Repository interface {
 	GetTelegramMessageByMessageID(messageID int64) (*TelegramMessage, error)
 	UpdateTaskMessageID(taskUUID string, msgID int64) error
 	GetTasksByMessageID(msgID int64) ([]TaskLedger, error) // НОВЫЙ МЕТОД
+	GetAllTasksForBoard() ([]TaskLedger, error)
+	DeleteTask(taskUUID string) error
 
 	SaveSession(session *FSMSession) error
 	GetSession(userID int64) (*FSMSession, error)
@@ -60,6 +62,14 @@ func (s *Storage) GetActiveTasks() ([]TaskLedger, error) {
 	var t []TaskLedger
 	err := s.db.Where("kanban_status NOT IN ?", []string{"Archive", "Done", "Failed"}).Find(&t).Error
 	return t, err
+}
+func (s *Storage) GetAllTasksForBoard() ([]TaskLedger, error) {
+	var t []TaskLedger
+	err := s.db.Where("kanban_status != ?", "Archive").Find(&t).Error
+	return t, err
+}
+func (s *Storage) DeleteTask(u string) error {
+	return s.db.Where("task_uuid = ?", u).Delete(&TaskLedger{}).Error
 }
 func (s *Storage) GetTaskByID(u string) (*TaskLedger, error) {
 	var t TaskLedger
@@ -103,3 +113,18 @@ func (s *Storage) GetPendingReminders(currentTime time.Time) ([]Reminder, error)
 	return reminders, err
 }
 func (s *Storage) MarkReminderFired(reminderID uint) error { return s.db.Model(&Reminder{}).Where("id = ?", reminderID).Update("status", "fired").Error }
+
+func (s *Storage) DeleteNoteData(msgID int64) (string, error) {
+	var msg TelegramMessage
+	if err := s.db.First(&msg, "message_id = ?", msgID).Error; err != nil {
+		return "", err
+	}
+	filePath := msg.FilePath
+
+	// Delete related tasks
+	s.db.Where("message_id = ?", msgID).Delete(&TaskLedger{})
+	// Delete the message record itself
+	s.db.Delete(&msg)
+
+	return filePath, nil
+}

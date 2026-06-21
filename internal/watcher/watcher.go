@@ -81,7 +81,7 @@ func checkTaskAndSync(taskID string, w *Watcher) {
 	if err == nil && strings.ToLower(task.KanbanStatus) != "done" {
 		w.logger.Info("Detected manual task completion in Obsidian", slog.String("taskID", taskID))
 		if w.bot != nil {
-			err = sync.CompleteTask(taskID, w.db, w.bot, w.vaultPath)
+			err = sync.ChangeTaskStatusAtomic(taskID, "Done", "", w.db, w.vaultPath)
 			if err != nil {
 				w.logger.Error("Failed to cascade sync completed task", slog.String("taskID", taskID), slog.Any("error", err))
 			}

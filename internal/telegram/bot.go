@@ -52,7 +52,7 @@ func NewBot(cfg Config, aiClient *ai.Client, db *storage.Storage, log *slog.Logg
 	bot.bot.Use(bot.authMiddleware())
 	bot.setupHandlers()
 
-	RegisterSyncHandlers(bot.bot, db, cfg.ObsidianPath, log)
+	RegisterSyncHandlers(bot.bot, db, cfg.ObsidianPath, log, fsmManager)
 
 	return bot, nil
 }
@@ -72,6 +72,7 @@ func (b *Bot) Stop() {
 }
 
 func (b *Bot) setupHandlers() {
+	b.bot.Handle("/start", b.handleStart)
 	b.bot.Handle(telebot.OnText, b.handleText)
 
 	// Подключаем слушатели на все виды медиа

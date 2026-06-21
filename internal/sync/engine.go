@@ -2,120 +2,147 @@ package sync
 
 import (
 	"fmt"
-	"html"
-	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
-
-	"gopkg.in/telebot.v3"
 
 	"pkm-daemon/internal/storage"
 	"pkm-daemon/internal/vfs"
 )
 
-func CompleteTask(taskID string, db *storage.Storage, bot *telebot.Bot, vaultPath string) error {
-	slog.Info("Starting Bi-directional Sync for task", slog.String("taskID", taskID))
-
+func ChangeTaskStatusAtomic(taskID string, newStatus string, reason string, db *storage.Storage, vaultPath string) error {
 	task, err := db.GetTaskByID(taskID)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 
-	if strings.ToLower(task.KanbanStatus) == "done" { return nil }
+	if task.KanbanStatus == newStatus && newStatus != "Failed" && newStatus != "Done" {
+		return nil
+	}
 
-	db.UpdateTaskStatus(taskID, "Done")
+	db.UpdateTaskStatus(taskID, newStatus)
 
-	// 1. Обновляем саму Заметку (поиск по тексту)
+	// Build replacement string for physical files
+	var replacement string
+	if newStatus == "Done" {
+		if reason != "" {
+			replacement = fmt.Sprintf("- [x] ✅ Выполнено: %s", reason)
+		} else {
+			replacement = "- [x]"
+		}
+	} else if newStatus == "Failed" {
+		replacement = fmt.Sprintf("- [x] ❌ Провалено: %s", reason)
+	} else if newStatus == "In Progress" {
+		replacement = "- [/]"
+	} else {
+		replacement = "- [ ]"
+	}
+
+	// 1. Update main Note file
 	if task.FilePath != "" {
-		replaceTaskStatusByContent(task.FilePath, task.Content)
+		replaceTaskLine(task.FilePath, task.Content, replacement)
 	}
 
-	// 2. БЕЗУСЛОВНО обновляем Task Manager и Kanban
+	// 2. Update Task_Manager.md
 	tasksFolderPath := filepath.Join(vaultPath, "01_Задачи")
-	
 	tmPath := filepath.Join(tasksFolderPath, "Task_Manager.md")
-	replaceTaskStatusByID(tmPath, taskID)
+	replaceTaskLineInManager(tmPath, taskID, replacement)
 
+	// 3. Update Kanban.md
 	kanbanPath := filepath.Join(tasksFolderPath, "🎯 Канбан.md")
-	updateKanbanFile(kanbanPath, taskID)
+	moveTaskInKanban(kanbanPath, taskID, newStatus, replacement)
 
-	// 3. ДИНАМИЧЕСКИЙ Telegram Update
-	if task.MessageID != 0 && bot != nil {
-		updateTelegramMessage(task.MessageID, db, bot)
-	}
 	return nil
 }
 
-func updateTelegramMessage(msgID int64, db *storage.Storage, bot *telebot.Bot) {
-	tm, err := db.GetTelegramMessageByMessageID(msgID)
-	if err != nil || tm == nil { return }
-	tasks, err := db.GetTasksByMessageID(msgID)
-	if err != nil { return }
-
-	var msgText strings.Builder
-	msgText.WriteString("✅ Заметка успешно создана и сохранена!\n\n")
-
-	var markup telebot.ReplyMarkup
-	var rows []telebot.Row
-
-	for _, t := range tasks {
-		if strings.ToLower(t.KanbanStatus) == "done" {
-			msgText.WriteString(fmt.Sprintf("✅ <s>%s</s>\n", html.EscapeString(t.Content)))
-		} else {
-			msgText.WriteString(fmt.Sprintf("⏳ %s\n", html.EscapeString(t.Content)))
-			btnText := "✅ " + t.Content
-			if len([]rune(btnText)) > 35 { btnText = string([]rune(btnText)[:32]) + "..." }
-			btn := markup.Data(btnText, "btn_done", t.TaskUUID)
-			rows = append(rows, markup.Row(btn))
-		}
+func DeleteTaskAtomic(taskID string, db *storage.Storage, vaultPath string) error {
+	task, err := db.GetTaskByID(taskID)
+	if err != nil {
+		return err
 	}
 
-	msg := &telebot.Message{ID: int(tm.MessageID), Chat: &telebot.Chat{ID: tm.ChatID}}
-	
-	if len(rows) > 0 {
-		markup.Inline(rows...)
-		_, err = bot.Edit(msg, msgText.String(), &markup, telebot.ModeHTML)
-	} else {
-		_, err = bot.Edit(msg, msgText.String(), telebot.ModeHTML)
+	err = db.DeleteTask(taskID)
+	if err != nil {
+		return err
 	}
 
-	if err != nil { slog.Error("Failed to edit Telegram message", slog.Any("error", err)) }
+	// 1. In Note file
+	if task.FilePath != "" {
+		deleteTaskLine(task.FilePath, task.Content)
+	}
+
+	// 2. Task Manager
+	tasksFolderPath := filepath.Join(vaultPath, "01_Задачи")
+	tmPath := filepath.Join(tasksFolderPath, "Task_Manager.md")
+	deleteTaskLineByID(tmPath, taskID)
+
+	// 3. Kanban
+	kanbanPath := filepath.Join(tasksFolderPath, "🎯 Канбан.md")
+	deleteTaskLineByID(kanbanPath, taskID)
+
+	return nil
 }
 
-func replaceTaskStatusByContent(filePath, contentStr string) error {
-	data, err := os.ReadFile(filePath)
-	if err != nil { return nil }
+// Helpers for generic replacements
 
+func replaceTaskLine(filePath, contentStr, replacement string) error {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil
+	}
 	lines := strings.Split(string(data), "\n")
 	changed := false
 	for i, line := range lines {
-		if strings.Contains(line, contentStr) && strings.Contains(line, "- [ ]") {
-			lines[i] = strings.Replace(line, "- [ ]", "- [x]", 1)
+		if strings.Contains(line, contentStr) && (strings.Contains(line, "- [ ]") || strings.Contains(line, "- [x]") || strings.Contains(line, "- [/]")) {
+			// Find the checkbox part and replace it.
+			// To be safe, we can regex replace the checkbox part.
+			importRegexp := regexp.MustCompile(`- \[[ xX/]\]`)
+			if replacement == "- [x]" || replacement == "- [ ]" || replacement == "- [/]" {
+				lines[i] = importRegexp.ReplaceAllString(line, replacement)
+			} else {
+				// Has reason attached. Replace the whole task text or just append?
+				// Better to append the reason if it's failed/done
+				lines[i] = importRegexp.ReplaceAllString(line, replacement)
+			}
 			changed = true
 			break
 		}
 	}
-
-	if changed { return vfs.AtomicWrite(filePath, []byte(strings.Join(lines, "\n"))) }
+	if changed {
+		return vfs.AtomicWrite(filePath, []byte(strings.Join(lines, "\n")))
+	}
 	return nil
 }
 
-func replaceTaskStatusByID(filePath, taskID string) error {
+func replaceTaskLineInManager(filePath, taskID, replacement string) error {
 	data, err := os.ReadFile(filePath)
-	if err != nil { return nil }
-
-	content := string(data)
-	if !strings.Contains(content, taskID) { return nil } // Оптимизация
-
-	content = strings.Replace(content, "- [ ] **Задача №"+taskID, "- [x] **Задача №"+taskID, 1)
-	content = strings.Replace(content, "- [ ] Задача №"+taskID, "- [x] Задача №"+taskID, 1)
-
-	return vfs.AtomicWrite(filePath, []byte(content))
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(string(data), "\n")
+	changed := false
+	searchStr := "**Задача №" + taskID
+	searchStr2 := "Задача №" + taskID
+	for i, line := range lines {
+		if strings.Contains(line, searchStr) || strings.Contains(line, searchStr2) {
+			importRegexp := regexp.MustCompile(`- \[[ xX/]\]( ❌ Провалено: .*?| ✅ Выполнено: .*?)?`)
+			lines[i] = importRegexp.ReplaceAllString(line, replacement)
+			changed = true
+			break
+		}
+	}
+	if changed {
+		return vfs.AtomicWrite(filePath, []byte(strings.Join(lines, "\n")))
+	}
+	return nil
 }
 
-func updateKanbanFile(kanbanPath, taskID string) error {
+func moveTaskInKanban(kanbanPath, taskID, newStatus, replacement string) error {
 	data, err := os.ReadFile(kanbanPath)
-	if err != nil { return nil }
-	
+	if err != nil {
+		return nil
+	}
 	lines := strings.Split(string(data), "\n")
 	var newLines []string
 	var taskLines []string
@@ -124,17 +151,16 @@ func updateKanbanFile(kanbanPath, taskID string) error {
 
 	for _, line := range lines {
 		cleanLine := strings.TrimRight(line, "\r")
-		
-		// Если нашли задачу - начинаем захват
+
 		if strings.Contains(cleanLine, searchStr) {
 			capturing = true
-			updatedLine := strings.Replace(cleanLine, "- [ ]", "- [x]", 1)
+			importRegexp := regexp.MustCompile(`- \[[ xX/]\]( ❌ Провалено: .*?| ✅ Выполнено: .*?)?`)
+			updatedLine := importRegexp.ReplaceAllString(cleanLine, replacement)
 			taskLines = append(taskLines, updatedLine)
 			continue
 		}
-		
+
 		if capturing {
-			// Захватываем вложенные элементы (ссылки на заметку)
 			if strings.HasPrefix(cleanLine, "\t") || strings.HasPrefix(cleanLine, "  ") {
 				taskLines = append(taskLines, cleanLine)
 				continue
@@ -142,32 +168,103 @@ func updateKanbanFile(kanbanPath, taskID string) error {
 				capturing = false
 			}
 		}
-		
+
 		if !capturing {
 			newLines = append(newLines, cleanLine)
 		}
 	}
-	
-	if len(taskLines) == 0 { return nil }
+
+	if len(taskLines) == 0 {
+		return nil
+	}
 
 	var finalLines []string
-	hasDone, inserted := false, false
-	
+	targetHeader := ""
+	switch newStatus {
+	case "Done":
+		targetHeader = "## ✅ Готово"
+	case "Failed":
+		targetHeader = "## ❌ Провалено"
+	case "In Progress":
+		targetHeader = "## ⏳ В процессе" // Or whatever name
+	default:
+		targetHeader = "## 🎯 К выполнению"
+	}
+
+	inserted := false
+	hasHeader := false
+
 	for _, line := range newLines {
 		finalLines = append(finalLines, line)
-		if strings.HasPrefix(strings.TrimSpace(line), "## ✅ Готово") {
-			hasDone = true
+		if strings.HasPrefix(strings.TrimSpace(line), targetHeader) {
+			hasHeader = true
 			finalLines = append(finalLines, taskLines...)
 			inserted = true
 		}
 	}
-	
-	if !hasDone {
-		finalLines = append(finalLines, "", "## ✅ Готово")
+
+	if !hasHeader {
+		finalLines = append(finalLines, "", targetHeader)
 		finalLines = append(finalLines, taskLines...)
 	} else if !inserted {
 		finalLines = append(finalLines, taskLines...)
 	}
-	
+
 	return vfs.AtomicWrite(kanbanPath, []byte(strings.Join(finalLines, "\n")))
+}
+
+func deleteTaskLine(filePath, contentStr string) error {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(string(data), "\n")
+	var newLines []string
+	changed := false
+	for _, line := range lines {
+		if strings.Contains(line, contentStr) && (strings.Contains(line, "- [ ]") || strings.Contains(line, "- [x]") || strings.Contains(line, "- [/]")) {
+			changed = true
+			continue // Skip this line
+		}
+		newLines = append(newLines, line)
+	}
+	if changed {
+		return vfs.AtomicWrite(filePath, []byte(strings.Join(newLines, "\n")))
+	}
+	return nil
+}
+
+func deleteTaskLineByID(filePath, taskID string) error {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(string(data), "\n")
+	var newLines []string
+	capturing := false
+	searchStr := "Задача №" + taskID
+	changed := false
+
+	for _, line := range lines {
+		if strings.Contains(line, searchStr) {
+			capturing = true
+			changed = true
+			continue
+		}
+		if capturing {
+			if strings.HasPrefix(line, "\t") || strings.HasPrefix(line, "  ") {
+				continue
+			} else {
+				capturing = false
+			}
+		}
+		if !capturing {
+			newLines = append(newLines, line)
+		}
+	}
+
+	if changed {
+		return vfs.AtomicWrite(filePath, []byte(strings.Join(newLines, "\n")))
+	}
+	return nil
 }

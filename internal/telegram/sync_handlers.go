@@ -2,42 +2,40 @@ package telegram
 
 import (
 	"log/slog"
-	"strings"
+	"os"
 
 	"gopkg.in/telebot.v3"
 
+	"pkm-daemon/internal/fsm"
 	"pkm-daemon/internal/storage"
-	"pkm-daemon/internal/sync"
 )
 
-// BtnTaskDone — инлайн-кнопка для пометки задачи выполненной
-var BtnTaskDone = telebot.InlineButton{Unique: "btn_done"}
+// BtnDeleteNote — инлайн-кнопка для удаления заметки
+var BtnDeleteNote = telebot.InlineButton{Unique: "btn_del_note"}
 
 // RegisterSyncHandlers регистрирует логику инлайн-кнопок для 15 этапа.
-func RegisterSyncHandlers(bot *telebot.Bot, db *storage.Storage, vaultPath string, logger *slog.Logger) {
-	bot.Handle(&BtnTaskDone, func(c telebot.Context) error {
-		taskID := strings.TrimSpace(c.Data())
-		if taskID == "" {
-			return c.Respond(&telebot.CallbackResponse{
-				Text:      "Ошибка: пустой ID задачи",
-				ShowAlert: true,
-			})
-		}
-
-		logger.Info("Inline button pressed: complete task", slog.String("taskID", taskID))
-
-		// Запускаем двунаправленную синхронизацию
-		err := sync.CompleteTask(taskID, db, bot, vaultPath)
+func RegisterSyncHandlers(bot *telebot.Bot, db *storage.Storage, vaultPath string, logger *slog.Logger, fsmManager *fsm.Manager) {
+	bot.Handle(&BtnDeleteNote, func(c telebot.Context) error {
+		msgID := int64(c.Message().ID)
+		filePath, err := db.DeleteNoteData(msgID)
 		if err != nil {
-			logger.Error("Sync Engine error", slog.Any("error", err))
+			logger.Error("Failed to delete note data", slog.Any("error", err))
 			return c.Respond(&telebot.CallbackResponse{
-				Text:      "Ошибка синхронизации!",
+				Text:      "Ошибка при удалении из БД!",
 				ShowAlert: true,
 			})
 		}
 
-		return c.Respond(&telebot.CallbackResponse{
-			Text: "✅ Задача выполнена и синхронизирована!",
-		})
+		err = os.Remove(filePath)
+		if err != nil && !os.IsNotExist(err) {
+			logger.Error("Failed to delete physical file", slog.Any("error", err))
+		}
+
+		_, err = bot.Edit(c.Message(), "🗑️ Заметка отменена и удалена")
+		if err != nil {
+			logger.Error("Failed to edit message on delete", slog.Any("error", err))
+		}
+
+		return c.Respond(&telebot.CallbackResponse{Text: "Заметка удалена!"})
 	})
 }
