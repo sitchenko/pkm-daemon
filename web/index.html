@@ -4,33 +4,41 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Kanban</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    
+    <!-- Telegram WebApp -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    
+    <!-- SortableJS -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+    
+    <!-- Marked.js -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
     <style>
         :root {
-            /* Fallbacks if Telegram theme is missing */
-            --tg-theme-bg-color: #ffffff;
-            --tg-theme-text-color: #000000;
-            --tg-theme-hint-color: #999999;
-            --tg-theme-secondary-bg-color: #f5f5f5;
-            
-            /* Custom Pastel/Monochrome variables */
-            --bg-color: var(--tg-theme-bg-color, #ffffff);
-            --text-color: var(--tg-theme-text-color, #000000);
-            --card-bg: #f9f9f9;
-            --card-border: #e0e0e0;
-            --column-bg: #fafafa;
-            --column-header: #333333;
-            --danger-bg: #ffebee;
-            --danger-text: #c62828;
-            --success-bg: #f1f8e9;
-            --success-text: #2e7d32;
+            --bg-color: #F7F9FC;
+            --text-color: #111827;
+            --text-muted: #6B7280;
+            --card-bg: #FFFFFF;
+            --card-border: #E5E7EB;
+            --column-bg: #F3F4F6;
+            --column-header: #374151;
+            --danger-bg: #FEF2F2;
+            --danger-text: #DC2626;
+            --success-bg: #F0FDF4;
+            --success-text: #166534;
+            --accent-color: #3B82F6;
         }
 
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Inter', sans-serif;
             user-select: none;
             -webkit-user-select: none;
         }
@@ -50,8 +58,17 @@
             font-weight: 600;
             font-size: 18px;
             border-bottom: 1px solid var(--card-border);
-            background-color: var(--bg-color);
+            background-color: var(--card-bg);
             z-index: 10;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }
+
+        /* KANBAN BOARD */
+        .board-container {
+            display: flex;
+            flex-direction: column;
+            flex-grow: 1;
+            overflow: hidden;
         }
 
         .board {
@@ -68,7 +85,7 @@
 
         .column {
             flex: 0 0 85vw;
-            max-width: 400px;
+            max-width: 350px;
             background-color: var(--column-bg);
             border-radius: 12px;
             display: flex;
@@ -84,8 +101,20 @@
             color: var(--column-header);
             border-bottom: 1px solid var(--card-border);
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            gap: 8px; /* Close gap between title and count */
+        }
+        
+        .column-title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .count {
+            color: var(--text-muted);
+            font-size: 14px;
+            font-weight: 500;
         }
 
         .task-list {
@@ -95,61 +124,203 @@
             min-height: 100px;
         }
 
+        /* TASK CARD */
         .task-card {
             background-color: var(--card-bg);
             border: 1px solid var(--card-border);
-            border-radius: 8px;
+            border-radius: 10px;
             padding: 14px;
-            margin-bottom: 10px;
+            margin-bottom: 12px;
             font-size: 14px;
-            line-height: 1.4;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-            cursor: grab;
+            line-height: 1.5;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
             transition: transform 0.2s, box-shadow 0.2s;
             position: relative;
+            cursor: pointer;
         }
-
+        
         .task-card:active {
-            cursor: grabbing;
-        }
-
-        .task-card.dragging {
-            opacity: 0.5;
-            transform: scale(0.95);
+            transform: scale(0.98);
         }
 
         .task-id {
-            font-size: 11px;
-            color: var(--tg-theme-hint-color);
+            font-size: 12px;
+            color: var(--text-muted);
             margin-bottom: 6px;
+            font-weight: 500;
         }
-
-        .delete-zone {
-            position: absolute;
-            bottom: -100px; /* Hidden initially */
-            left: 0;
-            right: 0;
-            height: 80px;
-            background-color: var(--danger-bg);
-            color: var(--danger-text);
+        
+        .task-content {
+            margin-bottom: 12px;
+            word-break: break-word;
+        }
+        
+        .task-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            border-top: 1px solid var(--card-border);
+            padding-top: 8px;
+            margin-top: 8px;
+        }
+        
+        .action-btn {
+            background: none;
+            border: none;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-muted);
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
             display: flex;
             align-items: center;
-            justify-content: center;
-            font-weight: 600;
-            transition: bottom 0.3s;
-            z-index: 1000;
-            border-top: 2px dashed var(--danger-text);
+            gap: 4px;
+            background-color: var(--column-bg);
+            transition: background-color 0.2s;
+        }
+        
+        .action-btn:active {
+            background-color: #E5E7EB;
+        }
+        
+        .action-btn.delete {
+            color: var(--danger-text);
+            background-color: var(--danger-bg);
         }
 
-        .delete-zone.active {
+        /* NOTE VIEWER */
+        .note-viewer {
+            display: none;
+            flex-direction: column;
+            flex-grow: 1;
+            overflow: hidden;
+            background-color: var(--bg-color);
+        }
+        
+        .note-header {
+            padding: 12px 16px;
+            display: flex;
+            align-items: center;
+            border-bottom: 1px solid var(--card-border);
+            background-color: var(--card-bg);
+        }
+        
+        .back-btn {
+            background: none;
+            border: none;
+            color: var(--accent-color);
+            font-weight: 500;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            padding: 8px 0;
+        }
+        
+        .note-content {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background-color: var(--card-bg);
+            line-height: 1.6;
+            color: var(--text-color);
+            font-size: 15px;
+            user-select: text;
+            -webkit-user-select: text;
+        }
+        
+        /* Markdown styles */
+        .note-content h1, .note-content h2, .note-content h3 {
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+        }
+        .note-content p {
+            margin-bottom: 1em;
+        }
+        .note-content ul, .note-content ol {
+            margin-bottom: 1em;
+            padding-left: 20px;
+        }
+        .note-content pre {
+            background: #F3F4F6;
+            padding: 12px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin-bottom: 1em;
+        }
+        .note-content code {
+            background: #F3F4F6;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+
+        /* BOTTOM SHEET (MODAL) */
+        .bottom-sheet-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.4);
+            display: none;
+            z-index: 2000;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .bottom-sheet-overlay.active {
+            display: block;
+            opacity: 1;
+        }
+
+        .bottom-sheet {
+            position: fixed;
+            bottom: -100%;
+            left: 0;
+            right: 0;
+            background: var(--card-bg);
+            border-top-left-radius: 20px;
+            border-top-right-radius: 20px;
+            padding: 24px;
+            z-index: 2001;
+            transition: bottom 0.3s cubic-bezier(0.1, 0.8, 0.2, 1);
+            box-shadow: 0 -4px 16px rgba(0,0,0,0.1);
+        }
+        
+        .bottom-sheet.active {
             bottom: 0;
         }
-
-        .delete-zone.drag-over {
-            background-color: #ffcdd2;
+        
+        .sheet-header {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            text-align: center;
         }
 
-        /* Modal */
+        .sheet-option {
+            padding: 14px;
+            border-radius: 12px;
+            background: var(--column-bg);
+            margin-bottom: 8px;
+            text-align: center;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        .sheet-option:active {
+            background: #E5E7EB;
+        }
+        
+        .sheet-option.cancel {
+            background: transparent;
+            color: var(--danger-text);
+            margin-top: 16px;
+        }
+
+        /* Text Prompt Modal */
         .modal-overlay {
             position: fixed;
             top: 0; left: 0; right: 0; bottom: 0;
@@ -157,20 +328,23 @@
             display: none;
             justify-content: center;
             align-items: center;
-            z-index: 2000;
+            z-index: 3000;
             padding: 20px;
         }
 
         .modal {
-            background: var(--bg-color);
+            background: var(--card-bg);
             padding: 24px;
             border-radius: 16px;
             width: 100%;
             max-width: 400px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
         }
 
         .modal h3 {
-            margin-bottom: 12px;
+            margin-bottom: 16px;
+            font-size: 18px;
+            font-weight: 600;
         }
 
         .modal input {
@@ -181,11 +355,16 @@
             border-radius: 8px;
             font-size: 16px;
             outline: none;
+            background: var(--bg-color);
         }
 
-        .modal .btn-group {
+        .modal input:focus {
+            border-color: var(--accent-color);
+        }
+
+        .btn-group {
             display: flex;
-            gap: 10px;
+            gap: 12px;
             justify-content: flex-end;
         }
 
@@ -193,18 +372,19 @@
             padding: 10px 16px;
             border-radius: 8px;
             border: none;
-            font-weight: 600;
+            font-weight: 500;
+            font-size: 15px;
             cursor: pointer;
         }
 
         .btn-cancel {
-            background: #e0e0e0;
-            color: #333;
+            background: var(--column-bg);
+            color: var(--text-color);
         }
 
         .btn-submit {
-            background: var(--text-color);
-            color: var(--bg-color);
+            background: var(--accent-color);
+            color: white;
         }
         
         /* Modern Scrollbar */
@@ -216,36 +396,77 @@
             background: transparent;
         }
         ::-webkit-scrollbar-thumb {
-            background: var(--card-border);
+            background: #D1D5DB;
             border-radius: 3px;
+        }
+        
+        .loading-spinner {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+            font-weight: 500;
         }
     </style>
 </head>
 <body>
 
-    <header>Мои Задачи</header>
+    <header id="mainHeader">Мои Задачи</header>
 
-    <div class="board">
-        <div class="column" data-status="pending">
-            <div class="column-header">⏳ Ожидают (<span class="count">0</span>)</div>
-            <div class="task-list"></div>
-        </div>
-        <div class="column" data-status="In Progress">
-            <div class="column-header">▶️ В работе (<span class="count">0</span>)</div>
-            <div class="task-list"></div>
-        </div>
-        <div class="column" data-status="Done" style="background-color: var(--success-bg);">
-            <div class="column-header" style="color: var(--success-text);">✅ Готово (<span class="count">0</span>)</div>
-            <div class="task-list"></div>
-        </div>
-        <div class="column" data-status="Failed" style="background-color: #fffaf0;">
-            <div class="column-header" style="color: #e65100;">❌ Провалено (<span class="count">0</span>)</div>
-            <div class="task-list"></div>
+    <div class="board-container" id="boardContainer">
+        <div class="board">
+            <div class="column" data-status="pending">
+                <div class="column-header">
+                    <span class="column-title">⏳ Ожидают</span>
+                    <span class="count">0</span>
+                </div>
+                <div class="task-list" id="col-pending"></div>
+            </div>
+            <div class="column" data-status="In Progress">
+                <div class="column-header">
+                    <span class="column-title">▶️ В работе</span>
+                    <span class="count">0</span>
+                </div>
+                <div class="task-list" id="col-inprogress"></div>
+            </div>
+            <div class="column" data-status="Done" style="background-color: var(--success-bg); border-color: #BBF7D0;">
+                <div class="column-header" style="color: var(--success-text); border-bottom-color: #BBF7D0;">
+                    <span class="column-title">✅ Готово</span>
+                    <span class="count">0</span>
+                </div>
+                <div class="task-list" id="col-done"></div>
+            </div>
+            <div class="column" data-status="Failed" style="background-color: var(--danger-bg); border-color: #FECACA;">
+                <div class="column-header" style="color: var(--danger-text); border-bottom-color: #FECACA;">
+                    <span class="column-title">❌ Провалено</span>
+                    <span class="count">0</span>
+                </div>
+                <div class="task-list" id="col-failed"></div>
+            </div>
         </div>
     </div>
 
-    <div class="delete-zone" id="deleteZone">
-        🗑️ Перетащите сюда для удаления
+    <!-- Note Viewer -->
+    <div class="note-viewer" id="noteViewer">
+        <div class="note-header">
+            <button class="back-btn" onclick="closeNote()">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                Назад
+            </button>
+        </div>
+        <div class="note-content" id="noteContent">
+            <!-- Markdown content will go here -->
+        </div>
+    </div>
+
+    <!-- Bottom Sheet (Move Task) -->
+    <div class="bottom-sheet-overlay" id="moveSheetOverlay" onclick="closeMoveSheet()"></div>
+    <div class="bottom-sheet" id="moveSheet">
+        <div class="sheet-header">Переместить задачу</div>
+        <div class="sheet-option" onclick="selectMoveStatus('pending')">⏳ Ожидает</div>
+        <div class="sheet-option" onclick="selectMoveStatus('In Progress')">▶️ В работу</div>
+        <div class="sheet-option" onclick="selectMoveStatus('Done')">✅ Готово</div>
+        <div class="sheet-option" onclick="selectMoveStatus('Failed')">❌ Провалено</div>
+        <div class="sheet-option cancel" onclick="closeMoveSheet()">Отмена</div>
     </div>
 
     <!-- Modal for Result/Reason -->
@@ -264,24 +485,25 @@
         const tg = window.Telegram.WebApp;
         tg.expand();
         tg.ready();
-
-        // Check if theme matches telegram, though we use fallback CSS variables
-        if (tg.themeParams.bg_color) {
-            document.documentElement.style.setProperty('--bg-color', tg.themeParams.bg_color);
-            document.documentElement.style.setProperty('--text-color', tg.themeParams.text_color);
-            // Derive some monochrome pastel colors based on light/dark mode
-            const isDark = tg.colorScheme === 'dark';
-            document.documentElement.style.setProperty('--card-bg', isDark ? '#222' : '#fcfcfc');
-            document.documentElement.style.setProperty('--card-border', isDark ? '#333' : '#e0e0e0');
-            document.documentElement.style.setProperty('--column-bg', isDark ? '#1a1a1a' : '#f5f5f5');
-        }
-
-        const API_BASE = ''; // Set to full URL if hosting separate from API
-        let tasks = [];
         
+        // We ignore telegram theme to enforce Apple iOS / Notion style light theme
+        // BUT we keep it so the webapp tells telegram it's ready.
+
+        const API_BASE = '';
+        const FETCH_HEADERS = {
+            'Content-Type': 'application/json',
+            'ngrok-skip-browser-warning': 'true'
+        };
+        
+        let tasks = [];
+        let sortables = [];
+        let currentMoveTaskId = null;
+        let currentMoveSourceStatus = null;
+
         async function fetchTasks() {
             try {
-                const res = await fetch(`${API_BASE}/api/tasks`);
+                const res = await fetch(`${API_BASE}/api/tasks`, { headers: FETCH_HEADERS });
+                if (!res.ok) throw new Error("Network response was not ok");
                 tasks = await res.json();
                 renderBoard();
             } catch (e) {
@@ -292,16 +514,16 @@
 
         function renderBoard() {
             const columns = {
-                "pending": document.querySelector('[data-status="pending"] .task-list'),
-                "In Progress": document.querySelector('[data-status="In Progress"] .task-list'),
-                "Done": document.querySelector('[data-status="Done"] .task-list'),
-                "Failed": document.querySelector('[data-status="Failed"] .task-list'),
+                "pending": document.getElementById('col-pending'),
+                "In Progress": document.getElementById('col-inprogress'),
+                "Done": document.getElementById('col-done'),
+                "Failed": document.getElementById('col-failed'),
             };
 
             // Clear all
             Object.values(columns).forEach(col => {
                 col.innerHTML = '';
-                col.parentElement.querySelector('.count').innerText = '0';
+                updateCount(col, 0);
             });
 
             tasks.forEach(task => {
@@ -310,141 +532,147 @@
                 
                 const card = document.createElement('div');
                 card.className = 'task-card';
-                card.draggable = true;
                 card.dataset.id = task.TaskUUID;
                 
-                card.innerHTML = `
+                // Content section (clickable to open note)
+                const contentDiv = document.createElement('div');
+                contentDiv.innerHTML = `
                     <div class="task-id">#${task.TaskUUID}</div>
                     <div class="task-content">${task.Content}</div>
                 `;
+                contentDiv.onclick = () => openNote(task.TaskUUID);
                 
-                setupDragEvents(card);
+                // Actions section
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'task-actions';
+                
+                const moveBtn = document.createElement('button');
+                moveBtn.className = 'action-btn';
+                moveBtn.innerHTML = '🔄 Переместить';
+                moveBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    openMoveSheet(task.TaskUUID, status);
+                };
+                
+                const delBtn = document.createElement('button');
+                delBtn.className = 'action-btn delete';
+                delBtn.innerHTML = '🗑️ Удалить';
+                delBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    handleDeleteTask(task.TaskUUID);
+                };
+                
+                actionsDiv.appendChild(moveBtn);
+                actionsDiv.appendChild(delBtn);
+                
+                card.appendChild(contentDiv);
+                card.appendChild(actionsDiv);
+                
                 col.appendChild(card);
             });
 
             // Update counts
-            Object.keys(columns).forEach(key => {
-                const col = columns[key];
-                col.parentElement.querySelector('.count').innerText = col.children.length;
-            });
-        }
-
-        // --- Drag and Drop Logic ---
-        let draggedCard = null;
-        let originalStatus = null;
-        let deleteZoneTimer = null;
-
-        const deleteZone = document.getElementById('deleteZone');
-
-        function setupDragEvents(card) {
-            card.addEventListener('dragstart', (e) => {
-                draggedCard = card;
-                originalStatus = card.parentElement.parentElement.dataset.status;
-                setTimeout(() => card.classList.add('dragging'), 0);
-                
-                // Show delete zone
-                deleteZone.classList.add('active');
-            });
-
-            card.addEventListener('dragend', () => {
-                draggedCard.classList.remove('dragging');
-                draggedCard = null;
-                deleteZone.classList.remove('active');
-                deleteZone.classList.remove('drag-over');
-                renderBoard(); // reset visual state just in case
-            });
-
-            // Touch events for mobile
-            card.addEventListener('touchstart', handleTouchStart, {passive: false});
-            card.addEventListener('touchmove', handleTouchMove, {passive: false});
-            card.addEventListener('touchend', handleTouchEnd);
-        }
-
-        // HTML5 Drag over columns
-        document.querySelectorAll('.task-list').forEach(list => {
-            list.addEventListener('dragover', e => {
-                e.preventDefault();
-                const afterElement = getDragAfterElement(list, e.clientY);
-                if (afterElement == null) {
-                    list.appendChild(draggedCard);
-                } else {
-                    list.insertBefore(draggedCard, afterElement);
-                }
+            Object.values(columns).forEach(col => {
+                updateCount(col, col.children.length);
             });
             
-            list.addEventListener('drop', async e => {
-                e.preventDefault();
-                if (!draggedCard) return;
-                
-                const newStatus = list.parentElement.dataset.status;
-                if (newStatus !== originalStatus) {
-                    handleStatusChange(draggedCard.dataset.id, newStatus, originalStatus);
-                }
-            });
-        });
+            initSortable();
+        }
 
-        // Delete Zone Drop
-        deleteZone.addEventListener('dragover', e => {
-            e.preventDefault();
-            deleteZone.classList.add('drag-over');
-        });
-        deleteZone.addEventListener('dragleave', e => {
-            deleteZone.classList.remove('drag-over');
-        });
-        deleteZone.addEventListener('drop', e => {
-            e.preventDefault();
-            if (draggedCard) {
-                handleDeleteTask(draggedCard.dataset.id);
+        function updateCount(colElement, count) {
+            colElement.parentElement.querySelector('.count').innerText = count;
+        }
+
+        function initSortable() {
+            // Destroy existing instances
+            sortables.forEach(s => s.destroy());
+            sortables = [];
+            
+            const lists = document.querySelectorAll('.task-list');
+            lists.forEach(list => {
+                const sortable = new Sortable(list, {
+                    group: 'kanban',
+                    animation: 150,
+                    ghostClass: 'dragging',
+                    delay: 100, // delay for mobile tap vs drag
+                    delayOnTouchOnly: true,
+                    onEnd: function (evt) {
+                        const itemEl = evt.item;
+                        const taskId = itemEl.dataset.id;
+                        const oldStatus = evt.from.parentElement.dataset.status;
+                        const newStatus = evt.to.parentElement.dataset.status;
+                        
+                        if (oldStatus !== newStatus) {
+                            handleStatusChange(taskId, newStatus, oldStatus);
+                        }
+                    }
+                });
+                sortables.push(sortable);
+            });
+        }
+
+        // --- Note Viewer Logic ---
+        const boardContainer = document.getElementById('boardContainer');
+        const noteViewer = document.getElementById('noteViewer');
+        const noteContent = document.getElementById('noteContent');
+        const mainHeader = document.getElementById('mainHeader');
+
+        async function openNote(taskId) {
+            boardContainer.style.display = 'none';
+            noteViewer.style.display = 'flex';
+            mainHeader.innerText = 'Просмотр Заметки';
+            noteContent.innerHTML = '<div class="loading-spinner">Загрузка...</div>';
+            
+            try {
+                const res = await fetch(`${API_BASE}/api/note?task_id=${taskId}`, { headers: FETCH_HEADERS });
+                const data = await res.json();
+                
+                if (data.error) {
+                    noteContent.innerHTML = `<div style="color: var(--danger-text)">${data.error}</div>`;
+                } else {
+                    noteContent.innerHTML = marked.parse(data.content || '');
+                }
+            } catch (e) {
+                noteContent.innerHTML = `<div style="color: var(--danger-text)">Ошибка загрузки заметки</div>`;
             }
-        });
-
-        function getDragAfterElement(container, y) {
-            const draggableElements = [...container.querySelectorAll('.task-card:not(.dragging)')];
-            return draggableElements.reduce((closest, child) => {
-                const box = child.getBoundingClientRect();
-                const offset = y - box.top - box.height / 2;
-                if (offset < 0 && offset > closest.offset) {
-                    return { offset: offset, element: child };
-                } else {
-                    return closest;
-                }
-            }, { offset: Number.NEGATIVE_INFINITY }).element;
         }
 
-        // Mobile Touch Polyfill (Simplified)
-        let touchStartX, touchStartY, initialCardX, initialCardY;
-        function handleTouchStart(e) {
-            // Simplified touch handling - in a real prod app use a library like SortableJS for mobile
-            // For now, we rely on click/tap to move if drag fails, but let's implement basic status change via tap
+        function closeNote() {
+            noteViewer.style.display = 'none';
+            boardContainer.style.display = 'flex';
+            mainHeader.innerText = 'Мои Задачи';
+        }
+
+        // --- Bottom Sheet Logic ---
+        const sheetOverlay = document.getElementById('moveSheetOverlay');
+        const moveSheet = document.getElementById('moveSheet');
+
+        function openMoveSheet(taskId, currentStatus) {
+            currentMoveTaskId = taskId;
+            currentMoveSourceStatus = currentStatus;
             
-            // To keep it simple and robust for the prompt, tap card -> open action sheet
-            tg.showPopup({
-                title: 'Действие с задачей',
-                message: 'Выберите новый статус или действие:',
-                buttons: [
-                    {id: 'pending', type: 'default', text: '⏳ Ожидает'},
-                    {id: 'In Progress', type: 'default', text: '▶️ В работу'},
-                    {id: 'Done', type: 'default', text: '✅ Готово'},
-                    {id: 'Failed', type: 'destructive', text: '❌ Провалено'},
-                    {id: 'delete', type: 'destructive', text: '🗑️ Удалить'},
-                ]
-            }, (btnId) => {
-                if (!btnId) return;
-                const cardId = this.dataset.id;
-                const currentStatus = this.parentElement.parentElement.dataset.status;
-                
-                if (btnId === 'delete') {
-                    handleDeleteTask(cardId);
-                } else if (btnId !== currentStatus) {
-                    handleStatusChange(cardId, btnId, currentStatus);
-                }
-            });
+            sheetOverlay.classList.add('active');
+            // small timeout to allow display:block to apply before animating bottom
+            setTimeout(() => {
+                moveSheet.classList.add('active');
+            }, 10);
         }
-        function handleTouchMove(e) {}
-        function handleTouchEnd(e) {}
+
+        function closeMoveSheet() {
+            moveSheet.classList.remove('active');
+            setTimeout(() => {
+                sheetOverlay.classList.remove('active');
+            }, 300); // match transition duration
+        }
+
+        function selectMoveStatus(newStatus) {
+            closeMoveSheet();
+            if (newStatus !== currentMoveSourceStatus && currentMoveTaskId) {
+                handleStatusChange(currentMoveTaskId, newStatus, currentMoveSourceStatus);
+            }
+        }
 
         // --- Action Handlers ---
-
         function handleDeleteTask(taskId) {
             tg.showConfirm("Удалить задачу окончательно?", async (confirmed) => {
                 if (confirmed) {
@@ -452,7 +680,7 @@
                         tg.MainButton.showProgress();
                         await fetch(`${API_BASE}/api/delete_task`, {
                             method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
+                            headers: FETCH_HEADERS,
                             body: JSON.stringify({task_id: taskId})
                         });
                         tasks = tasks.filter(t => t.TaskUUID !== taskId);
@@ -471,10 +699,10 @@
         function handleStatusChange(taskId, newStatus, oldStatus) {
             if (newStatus === 'Done' || newStatus === 'Failed') {
                 showPrompt(newStatus === 'Done' ? 'Укажите результат выполнения:' : 'Укажите причину провала:', async (reason) => {
-                    if (reason !== null) { // null means cancel
+                    if (reason !== null) {
                         await saveStatusChange(taskId, newStatus, reason);
                     } else {
-                        renderBoard(); // revert UI
+                        renderBoard(); // revert UI if cancelled
                     }
                 });
             } else {
@@ -487,7 +715,7 @@
                 tg.MainButton.showProgress();
                 const res = await fetch(`${API_BASE}/api/update_task`, {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: FETCH_HEADERS,
                     body: JSON.stringify({task_id: taskId, status: status, reason: reason})
                 });
                 
