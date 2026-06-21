@@ -32,6 +32,8 @@ type Repository interface {
 	CreateReminder(reminder *Reminder) error
 	GetPendingReminders(currentTime time.Time) ([]Reminder, error)
 	MarkReminderFired(reminderID uint) error
+
+	DeleteNoteData(msgID int64) (string, error)
 }
 
 type Storage struct {
@@ -122,9 +124,15 @@ func (s *Storage) DeleteNoteData(msgID int64) (string, error) {
 	filePath := msg.FilePath
 
 	// Delete related tasks
-	s.db.Where("message_id = ?", msgID).Delete(&TaskLedger{})
+	if err := s.db.Where("message_id = ?", msgID).Delete(&TaskLedger{}).Error; err != nil {
+		s.log.Error("Failed to delete related tasks", slog.Any("error", err))
+		// continue or return err depending on desired strictness, let's just log and continue for now, or return err
+		return "", err
+	}
 	// Delete the message record itself
-	s.db.Delete(&msg)
+	if err := s.db.Delete(&msg).Error; err != nil {
+		return "", err
+	}
 
 	return filePath, nil
 }

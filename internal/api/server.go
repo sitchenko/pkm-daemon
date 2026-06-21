@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/telebot.v3"
 
@@ -169,15 +170,27 @@ func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to read the file
+	filePath = strings.TrimSpace(filePath)
+
+	// Attempt to read the file
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		// Try with vault path just in case
-		data, err = os.ReadFile(filepath.Join(s.vaultPath, filePath))
-		if err != nil {
-			s.logger.Error("Failed to read note file", slog.String("path", filePath), slog.Any("error", err))
+		s.logger.Warn("Failed to read note file directly", slog.String("path", filePath), slog.Any("error", err))
+		
+		// If the path is not absolute, try joining it with vault path
+		if !filepath.IsAbs(filePath) {
+			joinedPath := filepath.Join(s.vaultPath, filePath)
+			data, err = os.ReadFile(joinedPath)
+			if err != nil {
+				s.logger.Error("Failed to read note file with vault path", slog.String("joined_path", joinedPath), slog.Any("error", err))
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(GetNoteResp{Error: "Failed to read note file (Not found in vault)"})
+				return
+			}
+		} else {
+			s.logger.Error("Absolute path read failed", slog.String("absolute_path", filePath), slog.Any("error", err))
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(GetNoteResp{Error: "Failed to read note file"})
+			json.NewEncoder(w).Encode(GetNoteResp{Error: "Failed to read note file (Not found at absolute path)"})
 			return
 		}
 	}

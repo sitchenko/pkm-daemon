@@ -15,6 +15,11 @@ import (
 	"pkm-daemon/internal/sync"
 )
 
+var (
+	reCheckboxCompleted = regexp.MustCompile(`(?i)-\s+\[[xX]\]\s+(?:\*\*)?Задача\s+№([0-9-]+)`)
+	reTaskID            = regexp.MustCompile(`(?i)Задача\s+№([0-9-]+)`)
+)
+
 type Watcher struct {
 	watcher   *fsnotify.Watcher
 	db        *storage.Storage
@@ -101,23 +106,20 @@ func (w *Watcher) handleFileChange(filePath string) {
 
 	if fileName == "🎯 Канбан.md" || fileName == "Канбан.md" {
 		// 1. Канбан: Ищем выполненные чекбоксы (если пользователь нажал галочку)
-		reID := regexp.MustCompile(`(?i)-\s+\[[xX]\]\s+(?:\*\*)?Задача\s+№([0-9-]+)`)
-		for _, match := range reID.FindAllStringSubmatch(content, -1) {
+		for _, match := range reCheckboxCompleted.FindAllStringSubmatch(content, -1) {
 			checkTaskAndSync(match[1], w)
 		}
 		
 		// 2. Канбан: Ловим ПЕРЕТАСКИВАНИЯ в колонку "Готово"
 		parts := strings.Split(content, "## ✅ Готово")
 		if len(parts) > 1 {
-			reID := regexp.MustCompile(`(?i)Задача\s+№([0-9-]+)`)
-			for _, match := range reID.FindAllStringSubmatch(parts[1], -1) {
+			for _, match := range reTaskID.FindAllStringSubmatch(parts[1], -1) {
 				checkTaskAndSync(match[1], w)
 			}
 		}
 	} else if fileName == "Task_Manager.md" {
 		// Task Manager: Ищем крестики
-		reID := regexp.MustCompile(`(?i)-\s+\[[xX]\]\s+(?:\*\*)?Задача\s+№([0-9-]+)`)
-		for _, match := range reID.FindAllStringSubmatch(content, -1) {
+		for _, match := range reCheckboxCompleted.FindAllStringSubmatch(content, -1) {
 			checkTaskAndSync(match[1], w)
 		}
 	} else {

@@ -1,23 +1,24 @@
 <!DOCTYPE html>
 <html lang="ru">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Kanban</title>
-    <!-- Google Fonts: Inter -->
+    <!-- System Fonts & Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-    
+
     <!-- Telegram WebApp -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    
+
     <!-- SortableJS -->
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
-    
+
     <!-- Marked.js -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    
+
     <style>
         :root {
             --bg-color: #F7F9FC;
@@ -60,7 +61,7 @@
             border-bottom: 1px solid var(--card-border);
             background-color: var(--card-bg);
             z-index: 10;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
         }
 
         /* KANBAN BOARD */
@@ -69,30 +70,35 @@
             flex-direction: column;
             flex-grow: 1;
             overflow: hidden;
+            position: relative;
         }
 
         .board {
             display: flex;
             flex-wrap: nowrap;
-            overflow-x: auto;
-            overflow-y: hidden;
-            flex-grow: 1;
-            padding: 16px;
-            gap: 16px;
-            scroll-snap-type: x mandatory;
-            -webkit-overflow-scrolling: touch;
+            width: 100%;
+            height: 100%;
+            transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
         }
 
         .column {
-            flex: 0 0 85vw;
-            max-width: 350px;
+            flex: 0 0 100vw;
+            width: 100vw;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        .column-content {
             background-color: var(--column-bg);
             border-radius: 12px;
             display: flex;
             flex-direction: column;
-            scroll-snap-align: center;
+            height: 100%;
             border: 1px solid var(--card-border);
-            max-height: 100%;
+            overflow: hidden;
+            position: relative;
         }
 
         .column-header {
@@ -102,9 +108,9 @@
             border-bottom: 1px solid var(--card-border);
             display: flex;
             align-items: center;
-            gap: 8px; /* Close gap between title and count */
+            gap: 8px;
         }
-        
+
         .column-title {
             display: flex;
             align-items: center;
@@ -121,7 +127,73 @@
             flex-grow: 1;
             overflow-y: auto;
             padding: 12px;
+            /* add bottom padding so tasks aren't hidden behind the dots */
+            padding-bottom: 32px;
             min-height: 100px;
+        }
+
+        /* Nav Buttons & Dots */
+        .nav-btn {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.9);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 100;
+            color: var(--accent-color);
+            transition: opacity 0.3s, transform 0.2s;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+        }
+
+        .nav-btn:active {
+            transform: translateY(-50%) scale(0.9);
+            background: rgba(255, 255, 255, 1);
+        }
+
+        .nav-btn.prev {
+            left: 8px;
+        }
+
+        .nav-btn.next {
+            right: 8px;
+        }
+
+        .nav-btn.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .nav-dots {
+            position: absolute;
+            bottom: 8px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            z-index: 100;
+            pointer-events: none;
+        }
+
+        .nav-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #D1D5DB;
+            transition: background 0.3s, transform 0.3s;
+        }
+
+        .nav-dot.active {
+            background: var(--accent-color);
+            transform: scale(1.2);
         }
 
         /* TASK CARD */
@@ -133,12 +205,12 @@
             margin-bottom: 12px;
             font-size: 14px;
             line-height: 1.5;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
             transition: transform 0.2s, box-shadow 0.2s;
             position: relative;
             cursor: pointer;
         }
-        
+
         .task-card:active {
             transform: scale(0.98);
         }
@@ -149,12 +221,12 @@
             margin-bottom: 6px;
             font-weight: 500;
         }
-        
+
         .task-content {
             margin-bottom: 12px;
             word-break: break-word;
         }
-        
+
         .task-actions {
             display: flex;
             gap: 8px;
@@ -163,7 +235,7 @@
             padding-top: 8px;
             margin-top: 8px;
         }
-        
+
         .action-btn {
             background: none;
             border: none;
@@ -179,11 +251,11 @@
             background-color: var(--column-bg);
             transition: background-color 0.2s;
         }
-        
+
         .action-btn:active {
             background-color: #E5E7EB;
         }
-        
+
         .action-btn.delete {
             color: var(--danger-text);
             background-color: var(--danger-bg);
@@ -197,7 +269,7 @@
             overflow: hidden;
             background-color: var(--bg-color);
         }
-        
+
         .note-header {
             padding: 12px 16px;
             display: flex;
@@ -205,7 +277,7 @@
             border-bottom: 1px solid var(--card-border);
             background-color: var(--card-bg);
         }
-        
+
         .back-btn {
             background: none;
             border: none;
@@ -218,7 +290,7 @@
             cursor: pointer;
             padding: 8px 0;
         }
-        
+
         .note-content {
             flex-grow: 1;
             overflow-y: auto;
@@ -230,20 +302,26 @@
             user-select: text;
             -webkit-user-select: text;
         }
-        
+
         /* Markdown styles */
-        .note-content h1, .note-content h2, .note-content h3 {
+        .note-content h1,
+        .note-content h2,
+        .note-content h3 {
             margin-top: 1.5em;
             margin-bottom: 0.5em;
             font-weight: 600;
         }
+
         .note-content p {
             margin-bottom: 1em;
         }
-        .note-content ul, .note-content ol {
+
+        .note-content ul,
+        .note-content ol {
             margin-bottom: 1em;
             padding-left: 20px;
         }
+
         .note-content pre {
             background: #F3F4F6;
             padding: 12px;
@@ -251,6 +329,7 @@
             overflow-x: auto;
             margin-bottom: 1em;
         }
+
         .note-content code {
             background: #F3F4F6;
             padding: 2px 4px;
@@ -261,14 +340,17 @@
         /* BOTTOM SHEET (MODAL) */
         .bottom-sheet-overlay {
             position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.4);
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.4);
             display: none;
             z-index: 2000;
             opacity: 0;
             transition: opacity 0.3s;
         }
-        
+
         .bottom-sheet-overlay.active {
             display: block;
             opacity: 1;
@@ -285,13 +367,13 @@
             padding: 24px;
             z-index: 2001;
             transition: bottom 0.3s cubic-bezier(0.1, 0.8, 0.2, 1);
-            box-shadow: 0 -4px 16px rgba(0,0,0,0.1);
+            box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.1);
         }
-        
+
         .bottom-sheet.active {
             bottom: 0;
         }
-        
+
         .sheet-header {
             font-size: 18px;
             font-weight: 600;
@@ -309,11 +391,11 @@
             cursor: pointer;
             transition: background 0.2s;
         }
-        
+
         .sheet-option:active {
             background: #E5E7EB;
         }
-        
+
         .sheet-option.cancel {
             background: transparent;
             color: var(--danger-text);
@@ -323,8 +405,11 @@
         /* Text Prompt Modal */
         .modal-overlay {
             position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.5);
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
             display: none;
             justify-content: center;
             align-items: center;
@@ -338,7 +423,7 @@
             border-radius: 16px;
             width: 100%;
             max-width: 400px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
         }
 
         .modal h3 {
@@ -386,20 +471,22 @@
             background: var(--accent-color);
             color: white;
         }
-        
+
         /* Modern Scrollbar */
         ::-webkit-scrollbar {
             width: 6px;
             height: 6px;
         }
+
         ::-webkit-scrollbar-track {
             background: transparent;
         }
+
         ::-webkit-scrollbar-thumb {
             background: #D1D5DB;
             border-radius: 3px;
         }
-        
+
         .loading-spinner {
             text-align: center;
             padding: 40px;
@@ -408,40 +495,69 @@
         }
     </style>
 </head>
+
 <body>
 
     <header id="mainHeader">Мои Задачи</header>
 
     <div class="board-container" id="boardContainer">
-        <div class="board">
+        <div class="nav-btn prev hidden" onclick="prevColumn()">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M15 18l-6-6 6-6" />
+            </svg>
+        </div>
+        <div class="nav-btn next" onclick="nextColumn()">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+                stroke-linecap="round" stroke-linejoin="round">
+                <path d="M9 18l6-6-6-6" />
+            </svg>
+        </div>
+
+        <div class="board" id="board">
             <div class="column" data-status="pending">
-                <div class="column-header">
-                    <span class="column-title">⏳ Ожидают</span>
-                    <span class="count">0</span>
+                <div class="column-content">
+                    <div class="column-header">
+                        <span class="column-title">⏳ Ожидают</span>
+                        <span class="count">0</span>
+                    </div>
+                    <div class="task-list" id="col-pending"></div>
                 </div>
-                <div class="task-list" id="col-pending"></div>
             </div>
             <div class="column" data-status="In Progress">
-                <div class="column-header">
-                    <span class="column-title">▶️ В работе</span>
-                    <span class="count">0</span>
+                <div class="column-content">
+                    <div class="column-header">
+                        <span class="column-title">▶️ В работе</span>
+                        <span class="count">0</span>
+                    </div>
+                    <div class="task-list" id="col-inprogress"></div>
                 </div>
-                <div class="task-list" id="col-inprogress"></div>
             </div>
-            <div class="column" data-status="Done" style="background-color: var(--success-bg); border-color: #BBF7D0;">
-                <div class="column-header" style="color: var(--success-text); border-bottom-color: #BBF7D0;">
-                    <span class="column-title">✅ Готово</span>
-                    <span class="count">0</span>
+            <div class="column" data-status="Done">
+                <div class="column-content" style="background-color: var(--success-bg); border-color: #BBF7D0;">
+                    <div class="column-header" style="color: var(--success-text); border-bottom-color: #BBF7D0;">
+                        <span class="column-title">✅ Готово</span>
+                        <span class="count">0</span>
+                    </div>
+                    <div class="task-list" id="col-done"></div>
                 </div>
-                <div class="task-list" id="col-done"></div>
             </div>
-            <div class="column" data-status="Failed" style="background-color: var(--danger-bg); border-color: #FECACA;">
-                <div class="column-header" style="color: var(--danger-text); border-bottom-color: #FECACA;">
-                    <span class="column-title">❌ Провалено</span>
-                    <span class="count">0</span>
+            <div class="column" data-status="Failed">
+                <div class="column-content" style="background-color: var(--danger-bg); border-color: #FECACA;">
+                    <div class="column-header" style="color: var(--danger-text); border-bottom-color: #FECACA;">
+                        <span class="column-title">❌ Провалено</span>
+                        <span class="count">0</span>
+                    </div>
+                    <div class="task-list" id="col-failed"></div>
                 </div>
-                <div class="task-list" id="col-failed"></div>
             </div>
+        </div>
+
+        <div class="nav-dots" id="navDots">
+            <div class="nav-dot active"></div>
+            <div class="nav-dot"></div>
+            <div class="nav-dot"></div>
+            <div class="nav-dot"></div>
         </div>
     </div>
 
@@ -449,7 +565,10 @@
     <div class="note-viewer" id="noteViewer">
         <div class="note-header">
             <button class="back-btn" onclick="closeNote()">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M15 18l-6-6 6-6" />
+                </svg>
                 Назад
             </button>
         </div>
@@ -485,21 +604,81 @@
         const tg = window.Telegram.WebApp;
         tg.expand();
         tg.ready();
-        
-        // We ignore telegram theme to enforce Apple iOS / Notion style light theme
-        // BUT we keep it so the webapp tells telegram it's ready.
 
         const API_BASE = '';
         const FETCH_HEADERS = {
             'Content-Type': 'application/json',
             'ngrok-skip-browser-warning': 'true'
         };
-        
+
         let tasks = [];
         let sortables = [];
         let currentMoveTaskId = null;
         let currentMoveSourceStatus = null;
 
+        // --- Carousel Logic ---
+        let currentColumnIndex = 0;
+        const totalColumns = 4;
+        const boardElem = document.getElementById('board');
+        const dots = document.querySelectorAll('.nav-dot');
+        const prevBtn = document.querySelector('.nav-btn.prev');
+        const nextBtn = document.querySelector('.nav-btn.next');
+
+        function updateCarousel() {
+            boardElem.style.transform = `translateX(-${currentColumnIndex * 100}vw)`;
+
+            prevBtn.classList.toggle('hidden', currentColumnIndex === 0);
+            nextBtn.classList.toggle('hidden', currentColumnIndex === totalColumns - 1);
+
+            dots.forEach((dot, idx) => {
+                dot.classList.toggle('active', idx === currentColumnIndex);
+            });
+        }
+
+        function prevColumn() {
+            if (currentColumnIndex > 0) {
+                currentColumnIndex--;
+                updateCarousel();
+            }
+        }
+
+        function nextColumn() {
+            if (currentColumnIndex < totalColumns - 1) {
+                currentColumnIndex++;
+                updateCarousel();
+            }
+        }
+
+        let touchStartX = 0;
+        let touchEndX = 0;
+        let swipeStartY = 0;
+        let swipeEndY = 0;
+
+        boardElem.addEventListener('touchstart', e => {
+            touchStartX = e.changedTouches[0].screenX;
+            swipeStartY = e.changedTouches[0].screenY;
+        }, { passive: true });
+
+        boardElem.addEventListener('touchend', e => {
+            touchEndX = e.changedTouches[0].screenX;
+            swipeEndY = e.changedTouches[0].screenY;
+            handleSwipe();
+        }, { passive: true });
+
+        function handleSwipe() {
+            const swipeThreshold = 40;
+
+            // Check if it's mostly a horizontal swipe
+            if (Math.abs(swipeStartY - swipeEndY) < Math.abs(touchStartX - touchEndX)) {
+                if (touchStartX - touchEndX > swipeThreshold) {
+                    nextColumn();
+                } else if (touchEndX - touchStartX > swipeThreshold) {
+                    prevColumn();
+                }
+            }
+        }
+
+        // --- Board Logic ---
         async function fetchTasks() {
             try {
                 const res = await fetch(`${API_BASE}/api/tasks`, { headers: FETCH_HEADERS });
@@ -529,11 +708,11 @@
             tasks.forEach(task => {
                 const status = task.KanbanStatus || 'pending';
                 const col = columns[status] || columns['pending'];
-                
+
                 const card = document.createElement('div');
                 card.className = 'task-card';
                 card.dataset.id = task.TaskUUID;
-                
+
                 // Content section (clickable to open note)
                 const contentDiv = document.createElement('div');
                 contentDiv.innerHTML = `
@@ -541,11 +720,11 @@
                     <div class="task-content">${task.Content}</div>
                 `;
                 contentDiv.onclick = () => openNote(task.TaskUUID);
-                
+
                 // Actions section
                 const actionsDiv = document.createElement('div');
                 actionsDiv.className = 'task-actions';
-                
+
                 const moveBtn = document.createElement('button');
                 moveBtn.className = 'action-btn';
                 moveBtn.innerHTML = '🔄 Переместить';
@@ -553,7 +732,7 @@
                     e.stopPropagation();
                     openMoveSheet(task.TaskUUID, status);
                 };
-                
+
                 const delBtn = document.createElement('button');
                 delBtn.className = 'action-btn delete';
                 delBtn.innerHTML = '🗑️ Удалить';
@@ -561,13 +740,13 @@
                     e.stopPropagation();
                     handleDeleteTask(task.TaskUUID);
                 };
-                
+
                 actionsDiv.appendChild(moveBtn);
                 actionsDiv.appendChild(delBtn);
-                
+
                 card.appendChild(contentDiv);
                 card.appendChild(actionsDiv);
-                
+
                 col.appendChild(card);
             });
 
@@ -575,7 +754,7 @@
             Object.values(columns).forEach(col => {
                 updateCount(col, col.children.length);
             });
-            
+
             initSortable();
         }
 
@@ -587,24 +766,18 @@
             // Destroy existing instances
             sortables.forEach(s => s.destroy());
             sortables = [];
-            
+
             const lists = document.querySelectorAll('.task-list');
             lists.forEach(list => {
                 const sortable = new Sortable(list, {
-                    group: 'kanban',
                     animation: 150,
                     ghostClass: 'dragging',
-                    delay: 100, // delay for mobile tap vs drag
+                    delay: 150, // delay for mobile tap vs drag
                     delayOnTouchOnly: true,
+                    // No 'group' parameter, restricting dragging strictly within the same column visually
                     onEnd: function (evt) {
-                        const itemEl = evt.item;
-                        const taskId = itemEl.dataset.id;
-                        const oldStatus = evt.from.parentElement.dataset.status;
-                        const newStatus = evt.to.parentElement.dataset.status;
-                        
-                        if (oldStatus !== newStatus) {
-                            handleStatusChange(taskId, newStatus, oldStatus);
-                        }
+                        // Reordering within the same column could be saved, 
+                        // but skipping actual API sync for internal sorting for now
                     }
                 });
                 sortables.push(sortable);
@@ -622,11 +795,11 @@
             noteViewer.style.display = 'flex';
             mainHeader.innerText = 'Просмотр Заметки';
             noteContent.innerHTML = '<div class="loading-spinner">Загрузка...</div>';
-            
+
             try {
                 const res = await fetch(`${API_BASE}/api/note?task_id=${taskId}`, { headers: FETCH_HEADERS });
                 const data = await res.json();
-                
+
                 if (data.error) {
                     noteContent.innerHTML = `<div style="color: var(--danger-text)">${data.error}</div>`;
                 } else {
@@ -650,9 +823,8 @@
         function openMoveSheet(taskId, currentStatus) {
             currentMoveTaskId = taskId;
             currentMoveSourceStatus = currentStatus;
-            
+
             sheetOverlay.classList.add('active');
-            // small timeout to allow display:block to apply before animating bottom
             setTimeout(() => {
                 moveSheet.classList.add('active');
             }, 10);
@@ -662,7 +834,7 @@
             moveSheet.classList.remove('active');
             setTimeout(() => {
                 sheetOverlay.classList.remove('active');
-            }, 300); // match transition duration
+            }, 300);
         }
 
         function selectMoveStatus(newStatus) {
@@ -681,7 +853,7 @@
                         await fetch(`${API_BASE}/api/delete_task`, {
                             method: 'POST',
                             headers: FETCH_HEADERS,
-                            body: JSON.stringify({task_id: taskId})
+                            body: JSON.stringify({ task_id: taskId })
                         });
                         tasks = tasks.filter(t => t.TaskUUID !== taskId);
                         renderBoard();
@@ -716,11 +888,11 @@
                 const res = await fetch(`${API_BASE}/api/update_task`, {
                     method: 'POST',
                     headers: FETCH_HEADERS,
-                    body: JSON.stringify({task_id: taskId, status: status, reason: reason})
+                    body: JSON.stringify({ task_id: taskId, status: status, reason: reason })
                 });
-                
+
                 if (!res.ok) throw new Error("Server error");
-                
+
                 // Update local state
                 const task = tasks.find(t => t.TaskUUID === taskId);
                 if (task) task.KanbanStatus = status;
@@ -769,4 +941,5 @@
         fetchTasks();
     </script>
 </body>
+
 </html>

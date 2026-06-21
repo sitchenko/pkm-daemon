@@ -11,6 +11,11 @@ import (
 	"pkm-daemon/internal/vfs"
 )
 
+var (
+	reCheckbox           = regexp.MustCompile(`- \[[ xX/]\]`)
+	reCheckboxWithReason = regexp.MustCompile(`- \[[ xX/]\]( ❌ Провалено: .*?| ✅ Выполнено: .*?)?`)
+)
+
 func ChangeTaskStatusAtomic(taskID string, newStatus string, reason string, db *storage.Storage, vaultPath string) error {
 	task, err := db.GetTaskByID(taskID)
 	if err != nil {
@@ -96,14 +101,12 @@ func replaceTaskLine(filePath, contentStr, replacement string) error {
 	for i, line := range lines {
 		if strings.Contains(line, contentStr) && (strings.Contains(line, "- [ ]") || strings.Contains(line, "- [x]") || strings.Contains(line, "- [/]")) {
 			// Find the checkbox part and replace it.
-			// To be safe, we can regex replace the checkbox part.
-			importRegexp := regexp.MustCompile(`- \[[ xX/]\]`)
 			if replacement == "- [x]" || replacement == "- [ ]" || replacement == "- [/]" {
-				lines[i] = importRegexp.ReplaceAllString(line, replacement)
+				lines[i] = reCheckbox.ReplaceAllString(line, replacement)
 			} else {
 				// Has reason attached. Replace the whole task text or just append?
 				// Better to append the reason if it's failed/done
-				lines[i] = importRegexp.ReplaceAllString(line, replacement)
+				lines[i] = reCheckbox.ReplaceAllString(line, replacement)
 			}
 			changed = true
 			break
@@ -126,8 +129,7 @@ func replaceTaskLineInManager(filePath, taskID, replacement string) error {
 	searchStr2 := "Задача №" + taskID
 	for i, line := range lines {
 		if strings.Contains(line, searchStr) || strings.Contains(line, searchStr2) {
-			importRegexp := regexp.MustCompile(`- \[[ xX/]\]( ❌ Провалено: .*?| ✅ Выполнено: .*?)?`)
-			lines[i] = importRegexp.ReplaceAllString(line, replacement)
+			lines[i] = reCheckboxWithReason.ReplaceAllString(line, replacement)
 			changed = true
 			break
 		}
@@ -154,8 +156,7 @@ func moveTaskInKanban(kanbanPath, taskID, newStatus, replacement string) error {
 
 		if strings.Contains(cleanLine, searchStr) {
 			capturing = true
-			importRegexp := regexp.MustCompile(`- \[[ xX/]\]( ❌ Провалено: .*?| ✅ Выполнено: .*?)?`)
-			updatedLine := importRegexp.ReplaceAllString(cleanLine, replacement)
+			updatedLine := reCheckboxWithReason.ReplaceAllString(cleanLine, replacement)
 			taskLines = append(taskLines, updatedLine)
 			continue
 		}
