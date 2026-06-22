@@ -43,11 +43,12 @@ type FSMSession struct {
 
 // Reminder хранит отложенные напоминания
 type Reminder struct {
-	ID              uint `gorm:"primaryKey"`
-	TaskUUID        string
-	TriggerTime     time.Time
-	MessagePayload  string
-	Status          string // pending, fired, escalated
-	Acknowledged    bool   `gorm:"default:false"`
-	EscalationLevel int    `gorm:"default:0"`
+	ID                uint `gorm:"primaryKey"`
+	TaskUUID          string
+	TriggerTime       time.Time
+	MessagePayload    string
+	Status            string // pending, fired, escalated, expired
+	Acknowledged      bool   `gorm:"default:false"`
+	EscalationLevel   int    `gorm:"default:0"`
+	TelegramMessageID int64  `gorm:"default:0"`
 }

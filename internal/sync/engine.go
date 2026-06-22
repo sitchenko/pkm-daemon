@@ -30,14 +30,16 @@ func ChangeTaskStatusAtomic(taskID string, newStatus string, reason string, db *
 
 	// Build replacement string for physical files
 	var replacement string
+	var reasonStr string
+
 	if newStatus == "Done" {
+		replacement = "- [x]"
 		if reason != "" {
-			replacement = fmt.Sprintf("- [x] ✅ Выполнено: %s", reason)
-		} else {
-			replacement = "- [x]"
+			reasonStr = fmt.Sprintf("\t✅ Выполнено: %s", reason)
 		}
 	} else if newStatus == "Failed" {
-		replacement = fmt.Sprintf("- [x] ❌ Провалено: %s", reason)
+		replacement = "- [x]"
+		reasonStr = fmt.Sprintf("\t❌ Провалено: %s", reason)
 	} else if newStatus == "In Progress" {
 		replacement = "- [/]"
 	} else {
@@ -46,17 +48,17 @@ func ChangeTaskStatusAtomic(taskID string, newStatus string, reason string, db *
 
 	// 1. Update main Note file
 	if task.FilePath != "" {
-		replaceTaskLine(task.FilePath, task.Content, replacement)
+		replaceTaskLine(task.FilePath, task.Content, replacement, reasonStr)
 	}
 
 	// 2. Update Task_Manager.md
 	tasksFolderPath := filepath.Join(vaultPath, "01_Задачи")
 	tmPath := filepath.Join(tasksFolderPath, "Task_Manager.md")
-	replaceTaskLineInManager(tmPath, taskID, replacement)
+	replaceTaskLineInManager(tmPath, taskID, replacement, reasonStr)
 
 	// 3. Update Kanban.md
 	kanbanPath := filepath.Join(tasksFolderPath, "🎯 Канбан.md")
-	moveTaskInKanban(kanbanPath, taskID, newStatus, replacement)
+	moveTaskInKanban(kanbanPath, taskID, newStatus, replacement, reasonStr)
 
 	return nil
 }
@@ -72,26 +74,38 @@ func DeleteTaskAtomic(taskID string, db *storage.Storage, vaultPath string) erro
 		return err
 	}
 
-	// 1. In Note file
 	if task.FilePath != "" {
 		deleteTaskLine(task.FilePath, task.Content)
 	}
 
-	// 2. Task Manager
 	tasksFolderPath := filepath.Join(vaultPath, "01_Задачи")
 	tmPath := filepath.Join(tasksFolderPath, "Task_Manager.md")
 	deleteTaskLineByID(tmPath, taskID)
 
-	// 3. Kanban
 	kanbanPath := filepath.Join(tasksFolderPath, "🎯 Канбан.md")
 	deleteTaskLineByID(kanbanPath, taskID)
 
 	return nil
 }
 
-// Helpers for generic replacements
+func insertOrReplaceReason(lines []string, index int, reasonStr string) []string {
+	if reasonStr == "" {
+		return lines
+	}
+	// Check if next line already has a reason
+	if index+1 < len(lines) && (strings.HasPrefix(strings.TrimSpace(lines[index+1]), "✅ Выполнено:") || strings.HasPrefix(strings.TrimSpace(lines[index+1]), "❌ Провалено:")) {
+		lines[index+1] = reasonStr
+		return lines
+	}
+	// Insert new line
+	var newLines []string
+	newLines = append(newLines, lines[:index+1]...)
+	newLines = append(newLines, reasonStr)
+	newLines = append(newLines, lines[index+1:]...)
+	return newLines
+}
 
-func replaceTaskLine(filePath, contentStr, replacement string) error {
+func replaceTaskLine(filePath, contentStr, replacement string, reasonStr string) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil
@@ -99,15 +113,11 @@ func replaceTaskLine(filePath, contentStr, replacement string) error {
 	lines := strings.Split(string(data), "\n")
 	changed := false
 	for i, line := range lines {
-		if strings.Contains(line, contentStr) && (strings.Contains(line, "- [ ]") || strings.Contains(line, "- [x]") || strings.Contains(line, "- [/]")) {
-			// Find the checkbox part and replace it.
-			if replacement == "- [x]" || replacement == "- [ ]" || replacement == "- [/]" {
-				lines[i] = reCheckbox.ReplaceAllString(line, replacement)
-			} else {
-				// Has reason attached. Replace the whole task text or just append?
-				// Better to append the reason if it's failed/done
-				lines[i] = reCheckbox.ReplaceAllString(line, replacement)
-			}
+		// Clean line matching
+		dbContent := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(contentStr), "- [ ]"), "- [/]"))
+		if strings.Contains(line, dbContent) && (strings.Contains(line, "- [ ]") || strings.Contains(line, "- [x]") || strings.Contains(line, "- [/]")) {
+			lines[i] = reCheckbox.ReplaceAllString(line, replacement)
+			lines = insertOrReplaceReason(lines, i, reasonStr)
 			changed = true
 			break
 		}
@@ -118,7 +128,7 @@ func replaceTaskLine(filePath, contentStr, replacement string) error {
 	return nil
 }
 
-func replaceTaskLineInManager(filePath, taskID, replacement string) error {
+func replaceTaskLineInManager(filePath, taskID, replacement string, reasonStr string) error {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil
@@ -130,6 +140,7 @@ func replaceTaskLineInManager(filePath, taskID, replacement string) error {
 	for i, line := range lines {
 		if strings.Contains(line, searchStr) || strings.Contains(line, searchStr2) {
 			lines[i] = reCheckboxWithReason.ReplaceAllString(line, replacement)
+			lines = insertOrReplaceReason(lines, i, reasonStr)
 			changed = true
 			break
 		}
@@ -140,7 +151,7 @@ func replaceTaskLineInManager(filePath, taskID, replacement string) error {
 	return nil
 }
 
-func moveTaskInKanban(kanbanPath, taskID, newStatus, replacement string) error {
+func moveTaskInKanban(kanbanPath, taskID, newStatus, replacement string, reasonStr string) error {
 	data, err := os.ReadFile(kanbanPath)
 	if err != nil {
 		return nil
@@ -158,10 +169,18 @@ func moveTaskInKanban(kanbanPath, taskID, newStatus, replacement string) error {
 			capturing = true
 			updatedLine := reCheckboxWithReason.ReplaceAllString(cleanLine, replacement)
 			taskLines = append(taskLines, updatedLine)
+			if reasonStr != "" {
+				taskLines = append(taskLines, reasonStr)
+			}
 			continue
 		}
 
 		if capturing {
+			// Skip existing reason line so we don't duplicate it
+			if strings.HasPrefix(strings.TrimSpace(cleanLine), "✅ Выполнено:") || strings.HasPrefix(strings.TrimSpace(cleanLine), "❌ Провалено:") {
+				continue
+			}
+
 			if strings.HasPrefix(cleanLine, "\t") || strings.HasPrefix(cleanLine, "  ") {
 				taskLines = append(taskLines, cleanLine)
 				continue
