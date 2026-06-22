@@ -209,7 +209,12 @@ func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, mediaByte
 		allowedPaths = []string{"Проекты", "Планы", "Ресурсы"}
 	}
 
-	aiResult, err := b.ai.AnalyzeNote(text, allowedPaths, mediaBytes, mimeType)
+	aiResult, err := b.ai.AnalyzeNote(text, allowedPaths, mediaBytes, mimeType, func(attempt int, max int, retryErr error) {
+		if attempt == 1 && loadingMsg != nil {
+			b.bot.Edit(loadingMsg, "⚠️ Нейросеть перегружена или достигнут лимит. Ожидаю ответа (запросы продолжаются)...")
+		}
+		b.log.Warn("Retrying AI request", slog.Int("attempt", attempt), slog.Int("max", max), slog.Any("error", retryErr))
+	})
 	if err != nil {
 		b.log.Error("AI Analysis failed", slog.Any("error", err))
 		if loadingMsg != nil {

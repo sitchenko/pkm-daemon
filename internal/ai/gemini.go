@@ -40,7 +40,7 @@ func (c *Client) getNextKey() string {
 	return key
 }
 
-func (c *Client) AnalyzeNote(content string, filesList []string, mediaBytes []byte, mimeType string) (*AnalysisResult, error) {
+func (c *Client) AnalyzeNote(content string, filesList []string, mediaBytes []byte, mimeType string, onRetry func(int, int, error)) (*AnalysisResult, error) {
 	filesStr := strings.Join(filesList, ", ")
 
 	prompt := fmt.Sprintf(`СИСТЕМНАЯ ИНСТРУКЦИЯ:
@@ -98,7 +98,7 @@ func (c *Client) AnalyzeNote(content string, filesList []string, mediaBytes []by
 	}
 	payload, _ := json.Marshal(reqBody)
 
-	maxRetries := len(c.keys)
+	maxRetries := 50 // Safe max retries, 50 * 10s = roughly 8.3 minutes
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		key := c.getNextKey()
 		req, _ := http.NewRequest(http.MethodPost, geminiAPIURL+key, bytes.NewBuffer(payload))
@@ -106,15 +106,21 @@ func (c *Client) AnalyzeNote(content string, filesList []string, mediaBytes []by
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			time.Sleep(1 * time.Second)
+			if onRetry != nil {
+				onRetry(attempt+1, maxRetries, err)
+			}
+			time.Sleep(10 * time.Second)
 			continue
 		}
 
 		bodyBytes, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
-		if resp.StatusCode == http.StatusTooManyRequests {
-			time.Sleep(2 * time.Second)
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			if onRetry != nil {
+				onRetry(attempt+1, maxRetries, fmt.Errorf("gemini error: %d %s", resp.StatusCode, string(bodyBytes)))
+			}
+			time.Sleep(10 * time.Second)
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
