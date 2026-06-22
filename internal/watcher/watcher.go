@@ -80,18 +80,13 @@ func (w *Watcher) Close() error {
 	return w.watcher.Close()
 }
 
-func checkTaskAndSync(taskID string, w *Watcher) {
+func syncTaskStatus(taskID string, newStatus string, w *Watcher) {
 	task, err := w.db.GetTaskByID(taskID)
-	// Если задача в базе всё еще Pending — значит это ручное изменение в Obsidian!
-	if err == nil && strings.ToLower(task.KanbanStatus) != "done" {
-		w.logger.Info("Detected manual task completion in Obsidian", slog.String("taskID", taskID))
-		if w.bot != nil {
-			err = sync.ChangeTaskStatusAtomic(taskID, "Done", "", w.db, w.vaultPath)
-			if err != nil {
-				w.logger.Error("Failed to cascade sync completed task", slog.String("taskID", taskID), slog.Any("error", err))
-			}
-		} else {
-			w.logger.Warn("Bot instance not set in watcher, skipping sync")
+	if err == nil && !strings.EqualFold(task.KanbanStatus, newStatus) {
+		w.logger.Info("Detected manual task status change in Obsidian", slog.String("taskID", taskID), slog.String("newStatus", newStatus))
+		err = sync.ChangeTaskStatusAtomic(taskID, newStatus, "", w.db, w.vaultPath)
+		if err != nil {
+			w.logger.Error("Failed to cascade sync task status", slog.String("taskID", taskID), slog.Any("error", err))
 		}
 	}
 }
@@ -105,25 +100,30 @@ func (w *Watcher) handleFileChange(filePath string) {
 	fileName := filepath.Base(filePath)
 
 	if fileName == "🎯 Канбан.md" || fileName == "Канбан.md" {
-		// 1. Канбан: Ищем выполненные чекбоксы (если пользователь нажал галочку)
-		for _, match := range reCheckboxCompleted.FindAllStringSubmatch(content, -1) {
-			checkTaskAndSync(match[1], w)
-		}
-		
-		// 2. Канбан: Ловим ПЕРЕТАСКИВАНИЯ в колонку "Готово"
-		parts := strings.Split(content, "## ✅ Готово")
-		if len(parts) > 1 {
-			for _, match := range reTaskID.FindAllStringSubmatch(parts[1], -1) {
-				checkTaskAndSync(match[1], w)
+		parts := strings.Split(content, "## ")
+		for _, part := range parts {
+			var currentStatus string
+			if strings.HasPrefix(part, "🎯 К выполнению") {
+				currentStatus = "pending"
+			} else if strings.HasPrefix(part, "⏳ В процессе") {
+				currentStatus = "In Progress"
+			} else if strings.HasPrefix(part, "✅ Готово") {
+				currentStatus = "Done"
+			} else if strings.HasPrefix(part, "❌ Провалено") {
+				currentStatus = "Failed"
+			} else {
+				continue
+			}
+			
+			for _, match := range reTaskID.FindAllStringSubmatch(part, -1) {
+				syncTaskStatus(match[1], currentStatus, w)
 			}
 		}
 	} else if fileName == "Task_Manager.md" {
-		// Task Manager: Ищем крестики
 		for _, match := range reCheckboxCompleted.FindAllStringSubmatch(content, -1) {
-			checkTaskAndSync(match[1], w)
+			syncTaskStatus(match[1], "Done", w)
 		}
 	} else {
-		// Обычная заметка: Ищем совпадения текста с базой
 		lines := strings.Split(content, "\n")
 		tasks, err := w.db.GetActiveTasks()
 		if err == nil {
@@ -132,8 +132,18 @@ func (w *Watcher) handleFileChange(filePath string) {
 				if strings.HasPrefix(clean, "- [x]") || strings.HasPrefix(clean, "- [X]") {
 					taskText := strings.TrimSpace(clean[5:])
 					for _, t := range tasks {
-						if strings.HasSuffix(filePath, filepath.Base(t.FilePath)) && strings.Contains(taskText, strings.TrimSpace(t.Content)) {
-							checkTaskAndSync(t.TaskUUID, w)
+						// Clean both strings to minimize false negatives due to spaces
+						dbContent := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(t.Content), "- [ ]"), "- [/]"))
+						if strings.HasSuffix(filePath, filepath.Base(t.FilePath)) && dbContent != "" && strings.Contains(taskText, dbContent) {
+							syncTaskStatus(t.TaskUUID, "Done", w)
+						}
+					}
+				} else if strings.HasPrefix(clean, "- [/]") {
+					taskText := strings.TrimSpace(clean[5:])
+					for _, t := range tasks {
+						dbContent := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(t.Content), "- [ ]"))
+						if strings.HasSuffix(filePath, filepath.Base(t.FilePath)) && dbContent != "" && strings.Contains(taskText, dbContent) {
+							syncTaskStatus(t.TaskUUID, "In Progress", w)
 						}
 					}
 				}

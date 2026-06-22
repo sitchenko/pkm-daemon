@@ -43,9 +43,11 @@ type FSMSession struct {
 
 // Reminder хранит отложенные напоминания
 type Reminder struct {
-	ID             uint `gorm:"primaryKey"`
-	TaskUUID       string
-	TriggerTime    time.Time
-	MessagePayload string
-	Status         string // pending, fired
+	ID              uint `gorm:"primaryKey"`
+	TaskUUID        string
+	TriggerTime     time.Time
+	MessagePayload  string
+	Status          string // pending, fired, escalated
+	Acknowledged    bool   `gorm:"default:false"`
+	EscalationLevel int    `gorm:"default:0"`
 }

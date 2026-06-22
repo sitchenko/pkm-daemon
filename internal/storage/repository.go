@@ -32,6 +32,9 @@ type Repository interface {
 	CreateReminder(reminder *Reminder) error
 	GetPendingReminders(currentTime time.Time) ([]Reminder, error)
 	MarkReminderFired(reminderID uint) error
+	AcknowledgeReminder(reminderID uint) error
+	GetRemindersForEscalation(currentTime time.Time) ([]Reminder, error)
+	UpdateReminder(reminder *Reminder) error
 
 	DeleteNoteData(msgID int64) (string, error)
 }
@@ -115,6 +118,14 @@ func (s *Storage) GetPendingReminders(currentTime time.Time) ([]Reminder, error)
 	return reminders, err
 }
 func (s *Storage) MarkReminderFired(reminderID uint) error { return s.db.Model(&Reminder{}).Where("id = ?", reminderID).Update("status", "fired").Error }
+func (s *Storage) AcknowledgeReminder(reminderID uint) error { return s.db.Model(&Reminder{}).Where("id = ?", reminderID).Update("acknowledged", true).Error }
+func (s *Storage) GetRemindersForEscalation(currentTime time.Time) ([]Reminder, error) {
+	var reminders []Reminder
+	escalationTime := currentTime.Add(-10 * time.Minute)
+	err := s.db.Where("status = ? AND acknowledged = ? AND trigger_time <= ?", "fired", false, escalationTime).Find(&reminders).Error
+	return reminders, err
+}
+func (s *Storage) UpdateReminder(reminder *Reminder) error { return s.db.Save(reminder).Error }
 
 func (s *Storage) DeleteNoteData(msgID int64) (string, error) {
 	var msg TelegramMessage

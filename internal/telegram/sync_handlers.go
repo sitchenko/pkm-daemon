@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -12,6 +13,7 @@ import (
 
 // BtnDeleteNote — инлайн-кнопка для удаления заметки
 var BtnDeleteNote = telebot.InlineButton{Unique: "btn_del_note"}
+var BtnAckReminder = telebot.InlineButton{Unique: "btn_ack_reminder"}
 
 // RegisterSyncHandlers регистрирует логику инлайн-кнопок для 15 этапа.
 func RegisterSyncHandlers(bot *telebot.Bot, db *storage.Storage, vaultPath string, logger *slog.Logger, fsmManager *fsm.Manager) {
@@ -37,5 +39,27 @@ func RegisterSyncHandlers(bot *telebot.Bot, db *storage.Storage, vaultPath strin
 		}
 
 		return c.Respond(&telebot.CallbackResponse{Text: "Заметка удалена!"})
+	})
+
+	bot.Handle(&BtnAckReminder, func(c telebot.Context) error {
+		data := c.Data() // Это будет ID напоминания
+		reminderID := 0
+		fmt.Sscanf(data, "%d", &reminderID)
+
+		if reminderID > 0 {
+			err := db.AcknowledgeReminder(uint(reminderID))
+			if err != nil {
+				logger.Error("Failed to acknowledge reminder", slog.Any("error", err))
+			} else {
+				logger.Info("Reminder acknowledged", slog.Int("id", reminderID))
+			}
+		}
+
+		// Убираем кнопку из сообщения
+		bot.EditReplyMarkup(c.Message(), nil)
+		
+		return c.Respond(&telebot.CallbackResponse{
+			Text: "Напоминание отмечено как прочитанное ✅",
+		})
 	})
 }
