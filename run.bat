@@ -12,7 +12,5 @@ if %ERRORLEVEL% neq 0 (
 
 echo [INFO] Starting PKM Daemon...
 echo --------------------------------------------------
-pkm-daemon.exe
-echo --------------------------------------------------
-
-pause
+start "" "pkm-daemon.exe"
+echo [INFO] Daemon is running in background.
