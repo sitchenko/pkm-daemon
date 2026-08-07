@@ -1,18 +1,17 @@
 @echo off
 chcp 65001 >nul
 
-:: Start ngrok in a new window
-echo [INFO] Starting ngrok on port 8080...
-start "ngrok" "D:\3. programs\ngrok.exe" http 8080
+echo [INFO] Building PKM Daemon...
+go build -ldflags="-H windowsgui" -o pkm-daemon.exe .\cmd\pkm-daemon
 
-echo [INFO] Waiting for ngrok to initialize...
-timeout /t 3 /nobreak >nul
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] Build failed!
+    pause
+    exit /b 1
+)
 
-:: Start project
-echo.
-echo [INFO] Building and Starting PKM Daemon...
+echo [INFO] Starting PKM Daemon...
 echo --------------------------------------------------
-go build -o pkm-daemon.exe .\cmd\pkm-daemon\main.go
 pkm-daemon.exe
 echo --------------------------------------------------
 

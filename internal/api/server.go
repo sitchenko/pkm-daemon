@@ -44,11 +44,12 @@ func (s *Server) Start(port string) error {
 	mux.HandleFunc("/api/delete_task", s.handleDeleteTask)
 	mux.HandleFunc("/api/note", s.handleGetNote)
 
-	// Add CORS headers for local development testing
+	// CORS middleware: allows requests from any Cloudflare Tunnel or VPS domain.
+	// Configured to work with any external WEBAPP_URL.
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, ngrok-skip-browser-warning")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return

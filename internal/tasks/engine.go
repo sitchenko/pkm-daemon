@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"pkm-daemon/internal/storage"
 	"pkm-daemon/internal/vfs"
@@ -74,7 +75,7 @@ func RegisterTask(content, noteName, noteFullPath, vaultPath, baseID, idSuffix s
 	}
 
 	tmContentStr := string(tmData)
-	taskRegex := regexp.MustCompile(`(?i)- \[[ xX]\] \*\*Задача №[0-9-]+\*\*:\s*(.*?)(?:<br>|$)`)
+	taskRegex := regexp.MustCompile(`(?i)- \[[ xX/]\] (?:<span[^>]*>)?\*\*Задача №[0-9-]+\*\*(?:</span>)?:\s*(.*?)(?:<br>|$)`)
 
 	lines := strings.Split(tmContentStr, "\n")
 	for _, line := range lines {
@@ -94,7 +95,59 @@ func RegisterTask(content, noteName, noteFullPath, vaultPath, baseID, idSuffix s
 
 	taskID := baseID + idSuffix
 
-	tmNewLine := fmt.Sprintf("- [ ] **Задача №%s**: %s<br>📝 *[[%s]]*", taskID, content, noteName)
+	// Extract dates from text to calculate priority
+	dateRegex := regexp.MustCompile(`\b(\d{2}\.\d{2}\.\d{4}|\d{4}-\d{2}-\d{2})\b`)
+	matches := dateRegex.FindAllStringSubmatch(content, -1)
+	
+	now := time.Now()
+	minDaysDiff := 9999
+	
+	for _, match := range matches {
+		dateStr := match[1]
+		var parsedTime time.Time
+		var err error
+		if strings.Contains(dateStr, ".") {
+			parsedTime, err = time.Parse("02.01.2006", dateStr)
+		} else {
+			parsedTime, err = time.Parse("2006-01-02", dateStr)
+		}
+		
+		if err == nil {
+			year1, month1, day1 := now.Date()
+			today := time.Date(year1, month1, day1, 0, 0, 0, 0, now.Location())
+			year2, month2, day2 := parsedTime.Date()
+			target := time.Date(year2, month2, day2, 0, 0, 0, 0, now.Location())
+			
+			days := int(target.Sub(today).Hours() / 24)
+			if days >= 0 && days < minDaysDiff {
+				minDaysDiff = days
+			}
+		}
+	}
+
+	priority := 0
+	lowerContent := strings.ToLower(content)
+	if strings.Contains(lowerContent, "срочн") || strings.Contains(lowerContent, "важн") || strings.Contains(lowerContent, "priority") || strings.Contains(lowerContent, "!") {
+		priority = 2
+	} else if strings.Contains(lowerContent, "средне") || strings.Contains(lowerContent, "medium") {
+		priority = 1
+	}
+
+	// Smart priority assignment based on dates
+	if minDaysDiff <= 1 {
+		priority = 2 // Today or tomorrow
+	} else if minDaysDiff <= 5 && priority < 1 {
+		priority = 1 // Within 5 days
+	}
+
+	taskLabel := fmt.Sprintf("**Задача №%s**", taskID)
+	if priority == 2 {
+		taskLabel = fmt.Sprintf(`<span style="color: #FF3B30">%s</span>`, taskLabel)
+	} else if priority == 1 {
+		taskLabel = fmt.Sprintf(`<span style="color: #FFCC00">%s</span>`, taskLabel)
+	}
+
+	tmNewLine := fmt.Sprintf("- [ ] %s: %s<br>📝 *[[%s]]*", taskLabel, content, noteName)
 
 	if tmContentStr != "" && !strings.HasSuffix(tmContentStr, "\n") {
 		tmContentStr += "\n"
@@ -118,7 +171,7 @@ func RegisterTask(content, noteName, noteFullPath, vaultPath, baseID, idSuffix s
 	}
 
 	kanbanLines := strings.Split(string(kanbanData), "\n")
-	kanbanNewLine := fmt.Sprintf("- [ ] **Задача №%s**: %s\n\t*[[%s]]*", taskID, content, noteName)
+	kanbanNewLine := fmt.Sprintf("- [ ] %s: %s\n\t*[[%s]]*", taskLabel, content, noteName)
 
 	var newKanbanLines []string
 	inserted := false
@@ -151,6 +204,7 @@ func RegisterTask(content, noteName, noteFullPath, vaultPath, baseID, idSuffix s
 		Content:      content,
 		KanbanStatus: "pending",
 		FilePath:     noteFullPath,
+		Priority:     priority,
 	}
 
 	if err := db.SaveTask(&ledgerEntry); err != nil {

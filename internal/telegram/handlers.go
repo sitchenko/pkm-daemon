@@ -250,7 +250,17 @@ func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, mediaByte
 		if webappURL == "" {
 			webappURL = "https://example.com" // Placeholder, user needs to set via .env
 		}
-		btnKanban := markup.WebApp("📊 Открыть Канбан", &telebot.WebApp{URL: webappURL})
+		
+		// Append task_id so the web app opens the note directly
+		noteURL := webappURL
+		firstTaskUUID := baseID + "-1" // Assuming at least one task is created if len(aiResult.Tasks) > 0
+		if strings.Contains(webappURL, "?") {
+			noteURL += "&task_id=" + firstTaskUUID
+		} else {
+			noteURL += "?task_id=" + firstTaskUUID
+		}
+		
+		btnKanban := markup.WebApp("📝 Открыть Заметку", &telebot.WebApp{URL: noteURL})
 		rows = append(rows, markup.Row(btnKanban))
 	}
 

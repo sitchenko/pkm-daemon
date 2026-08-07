@@ -29,6 +29,7 @@ type TaskLedger struct {
 	Content      string    `gorm:"type:text"`
 	FilePath     string    `gorm:"type:text"` // НОВОЕ: Физический путь к .md файлу
 	Deadline     time.Time
+	Priority     int       `gorm:"default:0"` // 0: Normal, 1: Medium, 2: High
 	CreatedAt    time.Time `gorm:"autoCreateTime"` // НОВОЕ: Время создания
 }
 

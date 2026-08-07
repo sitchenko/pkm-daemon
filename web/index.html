@@ -352,10 +352,23 @@
             -webkit-user-select: text;
         }
 
-        .note-content h1,
-        .note-content h2,
+        .note-content h1 {
+            font-size: 22px;
+            margin-top: 12px;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        .note-content h2 {
+            font-size: 18px;
+            margin-top: 1.2em;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+        }
+
         .note-content h3 {
-            margin-top: 1.5em;
+            font-size: 16px;
+            margin-top: 1.2em;
             margin-bottom: 0.5em;
             font-weight: 600;
         }
@@ -547,6 +560,160 @@
             font-size: 14px;
             text-align: center;
         }
+
+        /* MacOS Style Note Meta */
+        .note-meta-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 0px;
+            padding-bottom: 12px;
+            border-bottom: 0.5px solid var(--card-border);
+        }
+
+        .macos-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 500;
+            background: rgba(255, 255, 255, 0.6);
+            border: 0.5px solid var(--card-border);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+            color: var(--text-color);
+        }
+
+        .macos-badge .icon {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+
+        .priority-high {
+            background: rgba(255, 59, 48, 0.1);
+            color: #FF3B30;
+            border-color: rgba(255, 59, 48, 0.2);
+        }
+
+        .priority-medium {
+            background: rgba(255, 204, 0, 0.1);
+            color: #FF9500;
+            border-color: rgba(255, 204, 0, 0.2);
+        }
+
+        .priority-low {
+            background: rgba(52, 199, 89, 0.1);
+            color: #34C759;
+            border-color: rgba(52, 199, 89, 0.2);
+        }
+
+        /* Custom Cards inside Markdown */
+        .task-result-card {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px 16px;
+            margin: 12px 0;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 16px;
+            border: 0.5px solid var(--card-border);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+        }
+        .task-result-icon {
+            font-size: 20px;
+            line-height: 1.2;
+        }
+        .task-result-text {
+            flex: 1;
+            font-size: 15px;
+            line-height: 1.5;
+        }
+        .task-done .task-result-text {
+            text-decoration: line-through;
+            color: var(--text-muted);
+        }
+        .task-failed .task-result-text {
+            color: var(--danger-text);
+        }
+        .reminder-card {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px 16px;
+            margin: 12px 0;
+            background: rgba(0, 122, 255, 0.08);
+            border-radius: 16px;
+            border: 0.5px solid rgba(0, 122, 255, 0.2);
+            color: var(--accent-color);
+        }
+        .reminder-icon {
+            font-size: 20px;
+        }
+        .reminder-content {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .reminder-time {
+            font-weight: 600;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .reminder-icon {
+            font-size: 14px;
+        }
+        .note-meta-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        .tags-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 4px;
+        }
+        .tag-badge {
+            flex: 1 1 auto;
+            text-align: center;
+        }
+        .note-bottom-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 16px;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-top: 1px solid rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: center;
+            z-index: 100;
+        }
+        .kanban-btn {
+            background: none;
+            border: none;
+            color: var(--accent-color);
+            font-weight: 500;
+            font-size: 17px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            padding: 8px 0;
+            width: auto;
+        }
+        /* Add padding so content doesn't hide behind bottom bar */
+        .note-viewer .note-content {
+            padding-bottom: 90px;
+        }
     </style>
 </head>
 
@@ -617,16 +784,16 @@
 
     <!-- Note Viewer -->
     <div class="note-viewer" id="noteViewer">
-        <div class="note-header">
-            <button class="back-btn" onclick="closeNote()">
+        <div class="note-content" id="noteContent">
+            <!-- Markdown content will go here -->
+        </div>
+        <div class="note-bottom-bar">
+            <button class="kanban-btn" onclick="closeNote()">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M15 18l-6-6 6-6" />
                 </svg>
-                Назад
+                Канбан доска
             </button>
-        </div>
-        <div class="note-content" id="noteContent">
-            <!-- Markdown content will go here -->
         </div>
     </div>
 
@@ -662,8 +829,7 @@
 
         const API_BASE = '';
         const FETCH_HEADERS = {
-            'Content-Type': 'application/json',
-            'ngrok-skip-browser-warning': 'true'
+            'Content-Type': 'application/json'
         };
 
         let tasks = [];
@@ -753,12 +919,9 @@
         // --- Sorting Logic ---
         function sortTasks(tasksArray) {
             return tasksArray.sort((a, b) => {
-                // Priority (e.g. #важно, #priority, or !)
-                const aPrio = a.Content.includes('#priority') || a.Content.includes('#важно') || a.Content.includes('!');
-                const bPrio = b.Content.includes('#priority') || b.Content.includes('#важно') || b.Content.includes('!');
-                
-                if (aPrio && !bPrio) return -1;
-                if (!aPrio && bPrio) return 1;
+                const aPrio = a.Priority || 0;
+                const bPrio = b.Priority || 0;
+                if (aPrio !== bPrio) return bPrio - aPrio;
                 
                 // Recent tasks (Parse CreatedAt or rely on UUID/Order)
                 const aDate = new Date(a.CreatedAt || 0);
@@ -818,16 +981,19 @@
                     card.className = 'task-card';
                     card.dataset.id = task.TaskUUID;
 
+                    if (task.Priority === 2) {
+                        card.style.borderLeft = '4px solid #FF3B30';
+                    } else if (task.Priority === 1) {
+                        card.style.borderLeft = '4px solid #FFCC00';
+                    }
+
                     // Extract meta
                     const meta = extractMeta(task.Content);
-                    const isPriority = task.Content.includes('#priority') || task.Content.includes('#важно') || task.Content.includes('!');
 
                     let badgesHtml = '';
-                    if (isPriority) {
-                        badgesHtml += `<span class="badge priority">⚡ Приоритет</span>`;
-                    }
                     meta.labels.forEach(l => {
-                        if(l.toLowerCase() !== 'priority' && l.toLowerCase() !== 'важно') {
+                        const lw = l.toLowerCase();
+                        if(lw !== 'priority' && lw !== 'важно' && lw !== 'срочно' && lw !== 'medium' && lw !== 'средне') {
                             badgesHtml += `<span class="badge">#${l}</span>`;
                         }
                     });
@@ -910,11 +1076,105 @@
         const noteContent = document.getElementById('noteContent');
         const mainHeader = document.getElementById('mainHeader');
 
+        function parseObsidianNote(content) {
+            let raw = content || '';
+            let meta = { tags: [] };
+
+            // 1. Check for YAML frontmatter
+            const yamlRegex = /^\s*---\r?\n([\s\S]*?)\r?\n---/;
+            const yamlMatch = raw.match(yamlRegex);
+            
+            const isYaml = !!yamlMatch;
+            const searchArea = isYaml ? yamlMatch[1] : raw;
+            
+            if (isYaml) {
+                raw = raw.replace(yamlMatch[0], ''); 
+            }
+
+            // 2. Extract Tags
+            let tagsMatch;
+            if (isYaml) {
+                // In YAML, tags can span multiple lines until the next key
+                tagsMatch = searchArea.match(/tags:\s*([\s\S]*?)(?=\n\s*[a-zA-Zа-яА-Я_]+:|$)/i);
+            } else {
+                // In single-line, match until next known key
+                tagsMatch = searchArea.match(/tags:\s*([\s\S]*?)(?=\s*(date|time|priority|status):|\[|✅|❌|⏳|▶️|⏰|$)/i);
+            }
+
+            if (tagsMatch) {
+                meta.tags = tagsMatch[1].split(/[\-\,#\s\[\]]+/).map(t => t.trim()).filter(t => t);
+                if (!isYaml) raw = raw.replace(tagsMatch[0], '');
+            }
+
+            // 3. Helper to extract other fields
+            function extractField(name) {
+                let match;
+                if (isYaml) {
+                    // Match until the end of the line
+                    const regex = new RegExp(name + `:?\\s*([^\\n]+)`, 'i');
+                    match = searchArea.match(regex);
+                } else {
+                    // Match until next known keyword or special char
+                    const regex = new RegExp(name + `:?\\s*(.*?)(?=\\s*(date|time|priority|status|tags):|\\[|✅|❌|⏳|▶️|⏰|$)`, 'i');
+                    match = searchArea.match(regex);
+                }
+                
+                if (match) {
+                    if (!isYaml) raw = raw.replace(match[0], '');
+                    return match[1].replace(/^["'\\[]+|["'\\]]+$/g, '').trim();
+                }
+                return '';
+            }
+
+            meta.date = extractField('date');
+            meta.time = extractField('time');
+            meta.priority = extractField('priority');
+            meta.status = extractField('status');
+
+            // Clean up possible leftover spaces/dashes on empty lines
+            raw = raw.replace(/^[ \t]*[\-\*]?[ \t]*$/gm, '');
+
+            // 6. Task Manager Links
+            raw = raw.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
+                const textLower = text.toLowerCase();
+                if (textLower.includes('task manager') || textLower.includes('задач') || textLower.includes('ticktick') || url.includes('ticktick') || url.includes('todoist')) {
+                    return ''; 
+                }
+                return match; 
+            });
+
+            // 7. Replace Task Results with styling
+            raw = raw.replace(/^[\s\-\*]*(✅|❌|⏳|▶️)\s*(.*)$/gm, (match, emoji, rest) => {
+                let textClass = '';
+                if (emoji === '✅') textClass = 'task-done';
+                if (emoji === '❌') textClass = 'task-failed';
+                return `\n<div class="task-result-card ${textClass}">
+                    <div class="task-result-icon">${emoji}</div>
+                    <div class="task-result-text">${rest.trim()}</div>
+                </div>\n`;
+            });
+
+            // 8. Replace Reminders
+            raw = raw.replace(/^>\s*⏰\s*\*\*Напоминание установлено на:\*\*\s*(.*?)\n>\s*\*(.*?)\*/gm, (match, timeStr, textStr) => {
+                return `\n<div class="reminder-card">
+                    <div class="reminder-content">
+                        <div class="reminder-time"><span class="reminder-icon">⏰</span> ${timeStr.trim()}</div>
+                        <div class="reminder-text">${textStr.trim()}</div>
+                    </div>
+                </div>\n`;
+            });
+            
+            // Final cleanup of extra empty lines at top
+            raw = raw.replace(/^\s+/, '');
+
+            return { meta, cleanContent: raw.trim() };
+        }
+
         async function openNote(taskId) {
             boardContainer.style.display = 'none';
             bottomNav.style.display = 'none';
             noteViewer.style.display = 'flex';
-            mainHeader.innerText = 'Просмотр Заметки';
+            mainHeader.innerText = 'Просмотр заметок';
             noteContent.innerHTML = '<div class="loading-spinner">Загрузка...</div>';
 
             try {
@@ -929,7 +1189,40 @@
                         </div>
                     `;
                 } else {
-                    noteContent.innerHTML = marked.parse(data.content || '');
+                    const parsed = parseObsidianNote(data.content || '');
+                    
+                    let topRowHtml = '';
+                    let tagsRowHtml = '';
+
+                    if (parsed.meta.date) topRowHtml += `<div class="macos-badge"><span class="icon">📅</span> ${parsed.meta.date}</div>`;
+                    if (parsed.meta.time) topRowHtml += `<div class="macos-badge"><span class="icon">🕒</span> ${parsed.meta.time}</div>`;
+                    
+                    if (parsed.meta.priority) {
+                        let prioClass = '';
+                        const p = parsed.meta.priority.toLowerCase();
+                        if (p.includes('high') || p.includes('высок')) prioClass = 'priority-high';
+                        else if (p.includes('medium') || p.includes('средн')) prioClass = 'priority-medium';
+                        else if (p.includes('low') || p.includes('низк') || p.includes('легк')) prioClass = 'priority-low';
+                        
+                        topRowHtml += `<div class="macos-badge ${prioClass}"><span class="icon">🔥</span> ${parsed.meta.priority}</div>`;
+                    }
+                    
+                    if (parsed.meta.status) topRowHtml += `<div class="macos-badge"><span class="icon">📌</span> ${parsed.meta.status}</div>`;
+                    
+                    parsed.meta.tags.forEach(tag => {
+                        tagsRowHtml += `<div class="macos-badge tag-badge">#${tag}</div>`;
+                    });
+
+                    let finalHtml = '';
+                    if (topRowHtml || tagsRowHtml) {
+                        finalHtml += `<div class="note-meta-container">`;
+                        if (topRowHtml) finalHtml += `<div class="note-meta-row">${topRowHtml}</div>`;
+                        if (tagsRowHtml) finalHtml += `<div class="note-meta-row tags-row">${tagsRowHtml}</div>`;
+                        finalHtml += `</div>`;
+                    }
+                    
+                    finalHtml += marked.parse(parsed.cleanContent);
+                    noteContent.innerHTML = finalHtml;
                 }
             } catch (e) {
                 noteContent.innerHTML = `<div style="color: var(--danger-text)">Ошибка загрузки заметки</div>`;
@@ -940,7 +1233,7 @@
             noteViewer.style.display = 'none';
             boardContainer.style.display = 'flex';
             bottomNav.style.display = 'flex';
-            mainHeader.innerText = 'Мои Задачи';
+            mainHeader.innerText = 'Мои задачи';
         }
 
         // --- Bottom Sheet Logic ---
@@ -1074,7 +1367,15 @@
         };
 
         // Initialize
-        fetchTasks();
+        fetchTasks().then(() => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const startTaskId = urlParams.get('task_id');
+            if (startTaskId) {
+                // Remove task_id from URL so it doesn't reopen if refreshed
+                window.history.replaceState({}, document.title, window.location.pathname);
+                openNote(startTaskId);
+            }
+        });
     </script>
 </body>
 

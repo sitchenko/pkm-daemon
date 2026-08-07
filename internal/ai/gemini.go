@@ -43,6 +43,7 @@ func (c *Client) getNextKey() string {
 func (c *Client) AnalyzeNote(content string, filesList []string, mediaBytes []byte, mimeType string, onRetry func(int, int, error)) (*AnalysisResult, error) {
 	filesStr := strings.Join(filesList, ", ")
 
+	currentTime := time.Now().Format(time.RFC3339)
 	prompt := fmt.Sprintf(`СИСТЕМНАЯ ИНСТРУКЦИЯ:
 Ты — системный архитектор базы знаний Obsidian. Твоя задача — классифицировать заметку по методологии PARA. Верни СТРОГО JSON.
 
@@ -61,8 +62,11 @@ func (c *Client) AnalyzeNote(content string, filesList []string, mediaBytes []by
 ПРАВИЛА (КРИТИЧЕСКИ ВАЖНО):
 4. "file_name": ОБЯЗАТЕЛЬНО переведи на АНГЛИЙСКИЙ язык, в нижнем регистре (snake_case). Пример: beagle_care. Дату в это поле НЕ пиши.
 5. "title": Человекочитаемый заголовок.
-6. "is_task": Если есть задачи, true. "tasks": массив строк.
+6. "is_task": Если есть задачи, true. "tasks": массив строк. Если задача срочная, используй теги #срочно или #важно. Укажи дату дедлайна в тексте задачи в формате DD.MM.YYYY, если она есть.
 7. "reminders": Если в тексте есть дедлайны/время, верни МАССИВ объектов ({"time": "2026-06-02T17:00:00Z", "text": "Текст"}).
+
+ТЕКУЩЕЕ ВРЕМЯ (ОБЯЗАТЕЛЬНО используй для расчёта дедлайнов и времени напоминаний):
+%s
 
 ФОРМАТ ОТВЕТА (JSON):
 {
@@ -79,7 +83,7 @@ func (c *Client) AnalyzeNote(content string, filesList []string, mediaBytes []by
 }
 
 ТЕКСТ ПОЛЬЗОВАТЕЛЯ:
-%s`, filesStr, content)
+%s`, filesStr, currentTime, content)
 
 	parts := []geminiPart{}
 
