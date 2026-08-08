@@ -672,6 +672,11 @@
             flex-wrap: wrap;
             gap: 10px;
             margin-bottom: 8px;
+            width: 100%;
+        }
+        .note-meta-row .macos-badge {
+            flex: 1 1 auto;
+            justify-content: center;
         }
         .tags-row {
             display: flex;
@@ -680,8 +685,7 @@
             margin-top: 4px;
         }
         .tag-badge {
-            flex: 1 1 auto;
-            text-align: center;
+            /* flex and align handled by .note-meta-row .macos-badge */
         }
         .note-bottom-bar {
             position: fixed;
@@ -1170,7 +1174,7 @@
             return { meta, cleanContent: raw.trim() };
         }
 
-        async function openNote(taskId) {
+        async function openNote(id, type = 'task_id') {
             boardContainer.style.display = 'none';
             bottomNav.style.display = 'none';
             noteViewer.style.display = 'flex';
@@ -1178,7 +1182,7 @@
             noteContent.innerHTML = '<div class="loading-spinner">Загрузка...</div>';
 
             try {
-                const res = await fetch(`${API_BASE}/api/note?task_id=${taskId}`, { headers: FETCH_HEADERS });
+                const res = await fetch(`${API_BASE}/api/note?${type}=${id}`, { headers: FETCH_HEADERS });
                 const data = await res.json();
 
                 if (data.error) {
@@ -1370,10 +1374,15 @@
         fetchTasks().then(() => {
             const urlParams = new URLSearchParams(window.location.search);
             const startTaskId = urlParams.get('task_id');
+            const startMsgId = urlParams.get('msg_id');
+            
             if (startTaskId) {
-                // Remove task_id from URL so it doesn't reopen if refreshed
+                // Remove from URL so it doesn't reopen if refreshed
                 window.history.replaceState({}, document.title, window.location.pathname);
-                openNote(startTaskId);
+                openNote(startTaskId, 'task_id');
+            } else if (startMsgId) {
+                window.history.replaceState({}, document.title, window.location.pathname);
+                openNote(startMsgId, 'msg_id');
             }
         });
     </script>

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"net/url"
 
 	"gopkg.in/telebot.v3"
 
@@ -30,7 +31,16 @@ type albumData struct {
 
 func (b *Bot) handleStart(c telebot.Context) error {
 	welcomeMsg := "привет! я твой персональный pkm-демон.\n\nотправь мне текст, голосовое, кружок или файл, и я превращу это в структурированную заметку с задачами."
-	return c.Send(welcomeMsg)
+	
+	menu := &telebot.ReplyMarkup{ResizeKeyboard: true}
+	webappURL := os.Getenv("WEBAPP_URL")
+	if webappURL == "" {
+		webappURL = "https://example.com"
+	}
+	btn := menu.WebApp("📊 Моя Канбан-доска", &telebot.WebApp{URL: webappURL})
+	menu.Reply(menu.Row(btn))
+
+	return c.Send(welcomeMsg, menu)
 }
 
 func (b *Bot) handleText(c telebot.Context) error {
@@ -245,21 +255,22 @@ func (b *Bot) processNotePipelineAsync(c telebot.Context, text string, mediaByte
 	markup = &telebot.ReplyMarkup{}
 	var rows []telebot.Row
 
-	if len(aiResult.Tasks) > 0 {
-		webappURL := os.Getenv("WEBAPP_URL")
-		if webappURL == "" {
-			webappURL = "https://example.com" // Placeholder, user needs to set via .env
-		}
-		
-		// Append task_id so the web app opens the note directly
+	webappURL := os.Getenv("WEBAPP_URL")
+	if webappURL != "" {
 		noteURL := webappURL
-		firstTaskUUID := baseID + "-1" // Assuming at least one task is created if len(aiResult.Tasks) > 0
-		if strings.Contains(webappURL, "?") {
-			noteURL += "&task_id=" + firstTaskUUID
+		parsedURL, err := url.Parse(webappURL)
+		if err == nil {
+			q := parsedURL.Query()
+			q.Set("msg_id", fmt.Sprintf("%d", loadingMsg.ID))
+			parsedURL.RawQuery = q.Encode()
+			noteURL = parsedURL.String()
 		} else {
-			noteURL += "?task_id=" + firstTaskUUID
+			if strings.Contains(webappURL, "?") {
+				noteURL += "&msg_id=" + fmt.Sprintf("%d", loadingMsg.ID)
+			} else {
+				noteURL += "?msg_id=" + fmt.Sprintf("%d", loadingMsg.ID)
+			}
 		}
-		
 		btnKanban := markup.WebApp("📝 Открыть Заметку", &telebot.WebApp{URL: noteURL})
 		rows = append(rows, markup.Row(btnKanban))
 	}

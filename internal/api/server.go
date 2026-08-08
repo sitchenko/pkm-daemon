@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"gopkg.in/telebot.v3"
@@ -158,14 +159,31 @@ func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	taskID := r.URL.Query().Get("task_id")
-	if taskID == "" {
-		http.Error(w, "task_id is required", http.StatusBadRequest)
+	msgID := r.URL.Query().Get("msg_id")
+
+	var filePath string
+	var err error
+
+	if taskID != "" {
+		filePath, err = s.db.GetFilePathByTaskUUID(taskID)
+	} else if msgID != "" {
+		mID, parseErr := strconv.ParseInt(msgID, 10, 64)
+		if parseErr != nil {
+			http.Error(w, "invalid msg_id", http.StatusBadRequest)
+			return
+		}
+		var m *storage.TelegramMessage
+		m, err = s.db.GetTelegramMessageByMessageID(mID)
+		if err == nil && m != nil {
+			filePath = m.FilePath
+		}
+	} else {
+		http.Error(w, "task_id or msg_id is required", http.StatusBadRequest)
 		return
 	}
 
-	filePath, err := s.db.GetFilePathByTaskUUID(taskID)
 	if err != nil || filePath == "" {
-		s.logger.Error("Failed to get filepath for task", slog.String("task_id", taskID), slog.Any("error", err))
+		s.logger.Error("Failed to get filepath for note", slog.String("task_id", taskID), slog.String("msg_id", msgID), slog.Any("error", err))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(GetNoteResp{Error: "Note not found"})
 		return
